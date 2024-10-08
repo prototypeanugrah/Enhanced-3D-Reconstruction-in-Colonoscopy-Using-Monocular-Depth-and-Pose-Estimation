@@ -8,7 +8,6 @@ This project focuses on applying depth estimation techniques to endoscopic video
 
 The project uses the Hyper-Kvasir dataset, which is a comprehensive collection of gastrointestinal endoscopy images and videos. The dataset is licensed under a Creative Commons Attribution 4.0 International (CC BY 4.0) License.
 
-
 ## Features
 
 - Video processing: Extracts frames from .avi video files in the Hyper-Kvasir dataset.
@@ -35,12 +34,17 @@ The project uses the Hyper-Kvasir dataset, which is a comprehensive collection o
 
 Run the main script to process a video:
   ```
-  python main.py
+  python main.py [--input input_path] [--output output_path] [--model_size {small,base,large}]
   ```
+
+Arguments:
+- `input_path`: Path to input video file or folder containing videos
+- `--output`: Path to output video file (default: depth_video_output.mp4)
+- `--model_size`: Size of the depth estimation model (choices: small, base, large; default: small)
 
 This script will:
 1. Load the DepthAnythingV2 model
-2. Process the first .avi video found in the "hyper-kvasir-videos/videos" directory
+2. Process the specified video or the first .avi video found in the input directory
 3. Generate depth maps for each frame
 4. Create a new video with depth heatmaps
 
