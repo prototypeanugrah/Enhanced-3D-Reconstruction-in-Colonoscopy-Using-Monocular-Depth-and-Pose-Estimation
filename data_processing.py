@@ -1,7 +1,6 @@
 """Module for video data processing."""
 
 import os
-import argparse
 
 import cv2
 import matplotlib.pyplot as plt
@@ -10,10 +9,12 @@ import numpy as np
 
 def get_video_path(input_path: str) -> str:
     """
-    Get the path of the video file or the first .avi video in the specified folder.
+    Get the path of the video file or the first .avi video in the specified
+    folder.
 
     Args:
-        input_path (str): The path to the video file or folder containing video files.
+        input_path (str): The path to the video file or folder containing video
+        files.
 
     Returns:
         str: The full path to the video file.
@@ -34,29 +35,6 @@ def get_video_path(input_path: str) -> str:
         raise ValueError(
             "Invalid input path. Please provide a valid video file or folder."
         )
-
-
-def get_first_video(folder_path: str) -> str:
-    """
-    Get the path of the first .avi video in the specified folder.
-
-    Args:
-        folder_path (str): The path to the folder containing video files.
-
-    Returns:
-        str: The full path to the first .avi video file found.
-
-    Raises:
-        ValueError: If no .avi files are found in the specified folder.
-    """
-    # List all .avi files in the folder
-    video_files = [f for f in os.listdir(folder_path) if f.endswith(".avi")]
-
-    if not video_files:
-        raise ValueError("No .avi files found in the specified folder")
-
-    # Return the full path of the first .avi file
-    return os.path.join(folder_path, video_files[0])
 
 
 def setup_video_writer(cap: cv2.VideoCapture, output_path: str) -> cv2.VideoWriter:

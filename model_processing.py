@@ -21,7 +21,7 @@ def load_model(model_size: Literal["small", "base", "large"] = "small"):
     """
     # Check if CUDA is available, otherwise use CPU. Construct the model name based on the selected size
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    model_name = f"LiheYoung/depth-anything-{model_size}"
+    model_name = f"depth-anything/Depth-Anything-V2-{model_size}-hf"
 
     # Load the image processor and model
     processor = AutoImageProcessor.from_pretrained(model_name)

@@ -38,7 +38,7 @@ Run the main script to process a video:
   ```
 
 Arguments:
-- `input_path`: Path to input video file or folder containing videos
+- `--input`: Path to input video file or folder containing videos
 - `--output`: Path to output video file (default: depth_video_output.mp4)
 - `--model_size`: Size of the depth estimation model (choices: small, base, large; default: small)
 
