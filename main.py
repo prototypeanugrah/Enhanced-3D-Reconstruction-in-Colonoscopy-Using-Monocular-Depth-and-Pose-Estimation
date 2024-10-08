@@ -2,6 +2,7 @@
 
 import argparse
 import logging
+import os
 
 import cv2
 
@@ -16,6 +17,13 @@ logger = logging.getLogger(__name__)
 
 
 def main(input_path: str, output_path: str, model_size: str):
+    
+    # Ensure output directory exists
+    output_dir = os.path.dirname(output_path)
+    if output_dir and not os.path.exists(output_dir):
+        os.makedirs(output_dir)
+        logger.info(f"Created output directory: {output_dir}")
+        
     # Load model
     processor, model, device = load_model(model_size=model_size)
 
@@ -30,7 +38,10 @@ def main(input_path: str, output_path: str, model_size: str):
     logger.info("Total frames: %s", total_frames)
 
     # Setup video writer
-    out = setup_video_writer(cap, output_path)
+    base_output_path = output_path.rsplit('.', 1)[0]
+    out_depth = setup_video_writer(cap, f"{base_output_path}_depth.mp4", is_color=False,)
+    out_heatmap = setup_video_writer(cap, f"{base_output_path}_heatmap.mp4", is_color=True,)
+    out_overlay = setup_video_writer(cap, f"{base_output_path}_overlay.mp4", is_color=True,)
 
     frame_count = 0
 
@@ -41,31 +52,40 @@ def main(input_path: str, output_path: str, model_size: str):
 
         # Convert frame to RGB
         frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        logger.info("Converted to RGB")
 
         # Process frame
         depth_map = process_frame(frame_rgb, processor, model, device)
-        logger.info("Processed frame")
 
         # Convert depth to heatmap
         depth_heatmap = depth_to_heatmap(depth_map)
-        logger.info("Created heatmap")
+        
+        # Normalize depth map to 0-255 range for video writing
+        depth_map_normalized = cv2.normalize(depth_map, None, 0, 255, cv2.NORM_MINMAX, dtype=cv2.CV_8U,)
+        
+        # Create overlay of original frame and heatmap
+        overlay = cv2.addWeighted(frame, 0.6, cv2.cvtColor(depth_heatmap, cv2.COLOR_RGB2BGR), 0.4, 0,)
 
         # Convert heatmap back to BGR for video writing
         depth_heatmap_bgr = cv2.cvtColor(depth_heatmap, cv2.COLOR_RGB2BGR)
 
-        # Write the frame
-        out.write(depth_heatmap_bgr)
+        # Write the frames
+        out_depth.write(depth_map_normalized)
+        out_heatmap.write(cv2.cvtColor(depth_heatmap, cv2.COLOR_RGB2BGR))
+        out_overlay.write(overlay)
 
         frame_count += 1
-        if frame_count % 10 == 0:
+        if frame_count % 100 == 0:
             logger.info("Processed %s frames | %s", frame_count, total_frames)
 
     # Release everything
     cap.release()
-    out.release()
+    out_depth.release()
+    out_heatmap.release()
+    out_overlay.release()
 
-    logger.info("Depth estimation video saved to %s", output_path)
+    logger.info("Depth map video saved to %s", f"{base_output_path}_depth.mp4")
+    logger.info("Heatmap video saved to %s", f"{base_output_path}_heatmap.mp4")
+    logger.info("Overlay video saved to %s", f"{base_output_path}_overlay.mp4")
 
 
 if __name__ == "__main__":

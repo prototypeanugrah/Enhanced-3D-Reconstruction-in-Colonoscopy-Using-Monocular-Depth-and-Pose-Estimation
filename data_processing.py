@@ -37,13 +37,14 @@ def get_video_path(input_path: str) -> str:
         )
 
 
-def setup_video_writer(cap: cv2.VideoCapture, output_path: str) -> cv2.VideoWriter:
+def setup_video_writer(cap: cv2.VideoCapture, output_path: str, is_color: bool = True) -> cv2.VideoWriter:
     """
     Set up VideoWriter for the output video.
 
     Args:
         cap (cv2.VideoCapture): The video capture object of the input video.
         output_path (str): The path where the output video will be saved.
+        is_color (bool): Whether the output video should be in color. Default is True.
 
     Returns:
         cv2.VideoWriter: A VideoWriter object configured for the output video.
@@ -56,7 +57,7 @@ def setup_video_writer(cap: cv2.VideoCapture, output_path: str) -> cv2.VideoWrit
     # Define the codec and create VideoWriter object
     fourcc = cv2.VideoWriter_fourcc(*"mp4v")
 
-    return cv2.VideoWriter(output_path, fourcc, fps, (width, height))
+    return cv2.VideoWriter(output_path, fourcc, fps, (width, height), isColor=is_color)
 
 
 def depth_to_heatmap(depth: np.ndarray) -> np.ndarray:
