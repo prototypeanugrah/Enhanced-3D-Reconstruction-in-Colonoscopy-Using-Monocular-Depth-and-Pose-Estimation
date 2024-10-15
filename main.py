@@ -48,7 +48,8 @@ def process_video(video_path: str, output_path: str, processor, model, device):
         frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
         # Process frame
-        depth_map = process_frame(frame_rgb, processor, model, device)
+        # depth_map = process_frame(frame_rgb, processor, model, device)
+        depth_map = trainer.predict(model, processor(images=frame_rgb, return_tensors="pt",))[0].squeeze().cpu().numpy()
 
         # Convert depth to heatmap
         depth_heatmap = depth_to_heatmap(depth_map)
@@ -75,7 +76,10 @@ def process_video(video_path: str, output_path: str, processor, model, device):
     
 def main(input_path: str, output_path: str, model_size: str, limit: int = None):
     # Load model
-    processor, model, device = load_model(model_size=model_size)
+    # processor, model, device = load_model(model_size=model_size)
+    processor = AutoImageProcessor.from_pretrained(f"depth-anything/Depth-Anything-V2-{model_size}-hf")
+    model = DepthEstimationModule.load_from_checkpoint(f"depth-anything/Depth-Anything-V2-{model_size}-hf")
+    trainer = pl.Trainer(accelerator="gpu" if torch.cuda.is_available() else "cpu")
 
     # Get video paths
     video_paths = get_video_paths(input_path)
