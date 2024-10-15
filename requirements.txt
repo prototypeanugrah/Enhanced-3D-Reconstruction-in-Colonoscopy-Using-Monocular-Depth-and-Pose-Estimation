@@ -3,3 +3,4 @@ opencv-python
 matplotlib
 torch
 transformers
+pytorch-lightning
