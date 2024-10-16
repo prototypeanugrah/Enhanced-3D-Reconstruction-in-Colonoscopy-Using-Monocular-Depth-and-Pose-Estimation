@@ -8,6 +8,7 @@ import cv2
 import pytorch_lightning as pl
 
 from data_processing import get_video_paths, setup_video_writer, depth_to_heatmap
+
 # from lightning_model import DepthEstimationModule
 from model_processing import load_model_lightning, process_frame_lightning
 from tqdm import tqdm
@@ -17,16 +18,17 @@ logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger(__name__)
-os.environ['HF_HOME'] = '~/home/public/avaishna/.cache'
-...
+os.environ["HF_HOME"] = "~/home/public/avaishna/.cache"
+
+
 def process_video(video_path: str, output_path: str, processor, model, device):
     # Get input filename without extension
     input_filename = os.path.splitext(os.path.basename(video_path))[0]
-    
+
     # Create output directory
     output_dir = os.path.join(output_path, input_filename)
     os.makedirs(output_dir, exist_ok=True)
-        
+
     # Open the video file
     cap = cv2.VideoCapture(video_path)
 
@@ -34,9 +36,15 @@ def process_video(video_path: str, output_path: str, processor, model, device):
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
 
     # Setup video writers
-    out_depth = setup_video_writer(cap, os.path.join(output_dir, f"{input_filename}_depth.mp4"), is_color=False)
-    out_heatmap = setup_video_writer(cap, os.path.join(output_dir, f"{input_filename}_heatmap.mp4"), is_color=True)
-    out_overlay = setup_video_writer(cap, os.path.join(output_dir, f"{input_filename}_overlay.mp4"), is_color=True)
+    out_depth = setup_video_writer(
+        cap, os.path.join(output_dir, f"{input_filename}_depth.mp4"), is_color=False
+    )
+    out_heatmap = setup_video_writer(
+        cap, os.path.join(output_dir, f"{input_filename}_heatmap.mp4"), is_color=True
+    )
+    out_overlay = setup_video_writer(
+        cap, os.path.join(output_dir, f"{input_filename}_overlay.mp4"), is_color=True
+    )
 
     # Process frames
     for _ in range(total_frames):
@@ -52,12 +60,16 @@ def process_video(video_path: str, output_path: str, processor, model, device):
 
         # Convert depth to heatmap
         depth_heatmap = depth_to_heatmap(depth_map)
-        
+
         # Normalize depth map to 0-255 range for video writing
-        depth_map_normalized = cv2.normalize(depth_map, None, 0, 255, cv2.NORM_MINMAX, dtype=cv2.CV_8U)
-        
+        depth_map_normalized = cv2.normalize(
+            depth_map, None, 0, 255, cv2.NORM_MINMAX, dtype=cv2.CV_8U
+        )
+
         # Create overlay of original frame and heatmap
-        overlay = cv2.addWeighted(frame, 0.6, cv2.cvtColor(depth_heatmap, cv2.COLOR_RGB2BGR), 0.4, 0)
+        overlay = cv2.addWeighted(
+            frame, 0.6, cv2.cvtColor(depth_heatmap, cv2.COLOR_RGB2BGR), 0.4, 0
+        )
 
         # Write the frames
         out_depth.write(depth_map_normalized)
@@ -70,41 +82,44 @@ def process_video(video_path: str, output_path: str, processor, model, device):
     out_overlay.release()
 
     # logger.info(f"Processed video: {video_path}")
-...
+
+
 def main(input_path: str, output_path: str, model_size: str, limit: int = None):
     # Load model
     processor, model, device = load_model_lightning(model_size=model_size)
-    
+
     # Set up PyTorch Lightning Trainer
     trainer = pl.Trainer(accelerator=device)
-    
+
     # Move model to appropriate device
     model = model.to(device)
     # model = trainer.strategy.setup_module(model)
 
     # Get video paths
     video_paths = get_video_paths(input_path)
-    
+
     # Limit the number of videos if specified
     if limit is not None:
         video_paths = video_paths[:limit]
-        logger.info(f"Processing the first {limit} videos")
-    
+        logger.info("Processing the first %s videos", limit)
+
     # Process videos with tqdm progress bar
     for video_path in tqdm(video_paths, desc="Processing videos", unit="video"):
         process_video(video_path, output_path, processor, model, device)
+
+
 # def main(input_path: str, output_path: str, model_size: str):
-    
+
 #     # Get video path
 #     video_path = get_video_path(input_path)
-    
+
 #     # Get input filename without extension
 #     input_filename = os.path.splitext(os.path.basename(video_path))[0]
-    
+
 #     # Create output directory
 #     output_dir = os.path.join(output_path, input_filename)
 #     os.makedirs(output_dir, exist_ok=True)
-        
+
 #     # Load model
 #     processor, model, device = load_model(model_size=model_size)
 
@@ -134,10 +149,10 @@ def main(input_path: str, output_path: str, model_size: str, limit: int = None):
 
 #         # Convert depth to heatmap
 #         depth_heatmap = depth_to_heatmap(depth_map)
-        
+
 #         # Normalize depth map to 0-255 range for video writing
 #         depth_map_normalized = cv2.normalize(depth_map, None, 0, 255, cv2.NORM_MINMAX, dtype=cv2.CV_8U,)
-        
+
 #         # Create overlay of original frame and heatmap
 #         overlay = cv2.addWeighted(frame, 0.6, cv2.cvtColor(depth_heatmap, cv2.COLOR_RGB2BGR), 0.4, 0,)
 
@@ -158,7 +173,7 @@ def main(input_path: str, output_path: str, model_size: str, limit: int = None):
 #     out_depth.release()
 #     out_heatmap.release()
 #     out_overlay.release()
-    
+
 #     # Check if output files exist
 #     for suffix in ["depth", "heatmap", "overlay"]:
 #         output_file = os.path.join(output_dir, f"{input_filename}_{suffix}.mp4")
