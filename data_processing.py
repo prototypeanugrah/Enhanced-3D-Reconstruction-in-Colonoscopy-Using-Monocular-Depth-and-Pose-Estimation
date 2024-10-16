@@ -1,7 +1,7 @@
 """Module for video data processing."""
 
-import os
 import logging
+import os
 
 import cv2
 import matplotlib.pyplot as plt
@@ -33,7 +33,8 @@ def get_video_paths(input_path: str) -> str:
         return [input_path]
     elif os.path.isdir(input_path):
         video_files = [
-            os.path.join(input_path, f) for f in os.listdir(input_path) 
+            os.path.join(input_path, f)
+            for f in os.listdir(input_path)
             if f.endswith((".avi", ".mp4"))
         ]
         if not video_files:
@@ -45,7 +46,9 @@ def get_video_paths(input_path: str) -> str:
         )
 
 
-def setup_video_writer(cap: cv2.VideoCapture, output_path: str, is_color: bool = True) -> cv2.VideoWriter:
+def setup_video_writer(
+    cap: cv2.VideoCapture, output_path: str, is_color: bool = True
+) -> cv2.VideoWriter:
     """
     Set up VideoWriter for the output video.
 

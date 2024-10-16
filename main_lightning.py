@@ -38,8 +38,7 @@ def process_video(video_path: str, output_path: str, processor, model, device):
     out_heatmap = setup_video_writer(cap, os.path.join(output_dir, f"{input_filename}_heatmap.mp4"), is_color=True)
     out_overlay = setup_video_writer(cap, os.path.join(output_dir, f"{input_filename}_overlay.mp4"), is_color=True)
 
-    # Process frames with tqdm progress bar
-    # for _ in tqdm(range(total_frames), desc=f"Processing {input_filename}", unit="frame"):
+    # Process frames
     for _ in range(total_frames):
         ret, frame = cap.read()
         if not ret:
