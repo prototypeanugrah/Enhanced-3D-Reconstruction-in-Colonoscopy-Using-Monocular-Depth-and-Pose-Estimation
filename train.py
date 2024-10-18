@@ -13,6 +13,10 @@ from torchvision import transforms
 import torch
 import pytorch_lightning as pl
 
+# Set float32 matrix multiplication precision to 'high' for better performance
+# on Tensor Cores
+torch.set_float32_matmul_precision("high")
+
 # Setup logger
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
@@ -28,12 +32,13 @@ def main(
     lr: float,
     model_size: str,
     epochs: int,
+    single_video: str = None,
 ):
     # Set up data
     transform = transforms.Compose(
         [
             transforms.ToTensor(),
-            transforms.Resize((384, 384)),
+            transforms.Resize((224, 224)),
             transforms.Normalize(
                 mean=[0.485, 0.456, 0.406],
                 std=[0.229, 0.224, 0.225],
@@ -41,31 +46,62 @@ def main(
         ]
     )
 
-    train_dataset = CustomVideoDepthDataset(
-        os.path.join(input_path, "train"),
-        transform=transform,
-    )
-    val_dataset = CustomVideoDepthDataset(
-        os.path.join(input_path, "val"),
-        transform=transform,
-    )
-    # test_dataset = CustomVideoDepthDataset(
-    #     os.path.join(input_path, "test"),
-    #     transform=transform,
+    if single_video:
+        # Process a single video file
+        train_dataset = CustomVideoDepthDataset(
+            os.path.dirname(single_video),
+            transform=transform,
+            single_file=os.path.basename(single_video),
+        )
+        train_dataloader = DataLoader(
+            train_dataset,
+            batch_size=batch_size,
+            shuffle=False,
+            num_workers=2,
+        )
+
+    # temp_dataset = CustomVideoDepthDataset(
+    #     os.path.join(input_path, "val"),
+    #     transform=ransform,
     # )
 
-    train_dataloader = DataLoader(
-        train_dataset,
-        batch_size=batch_size,
-        shuffle=True,
-        num_workers=4,
-    )
-    val_dataloader = DataLoader(
-        val_dataset,
-        batch_size=batch_size,
-        shuffle=False,
-        num_workers=4,
-    )
+    # normalize_transform = CustomVideoDepthDataset.get_normalization_transform(
+    #     temp_dataset
+    # )
+
+    # transform = transforms.Compose(
+    #     [
+    #         transform,
+    #         normalize_transform,
+    #     ]
+    # )
+
+    # train_dataset = CustomVideoDepthDataset(
+    #     os.path.join(input_path, "train"),
+    #     transform=transform,
+    # )
+    else:
+
+        train_dataset = CustomVideoDepthDataset(
+            os.path.join(input_path, "train"),
+            transform=transform,
+        )
+        train_dataloader = DataLoader(
+            train_dataset,
+            batch_size=batch_size,
+            shuffle=True,
+            num_workers=4,
+        )
+        val_dataset = CustomVideoDepthDataset(
+            os.path.join(input_path, "val"),
+            transform=transform,
+        )
+        val_dataloader = DataLoader(
+            val_dataset,
+            batch_size=batch_size,
+            shuffle=False,
+            num_workers=4,
+        )
 
     # Set up model
     model = DepthEstimationModule(
@@ -83,17 +119,18 @@ def main(
         devices=1,
         logger=tb_logger,
         callbacks=[pl.callbacks.ModelCheckpoint(monitor="val_loss")],
+        accumulate_grad_batches=2,
     )
 
     # Train the model
     trainer.fit(
         model,
-        train_dataloader,
-        val_dataloader,
+        train_dataloaders=train_dataloader,
+        val_dataloaders=val_dataloader,
     )
 
     # Save the fine-tuned model
-    custom_model_name = f"pretrained_l{lr}_e{epochs}_b{batch_size}"
+    custom_model_name = f"pretrained_l{lr}_e{epochs}_b{batch_size}_m{model_size}_s{1 if single_video else 0}"
     custom_output_path = os.path.join(output_path, custom_model_name)
     model.model.save_pretrained(custom_output_path)
     logger.info("Saved fine-tuned model to %s", custom_output_path)
@@ -146,6 +183,12 @@ if __name__ == "__main__":
         default=1e-4,
         help="Learning rate",
     )
+    parser.add_argument(
+        "-s",
+        "--single_video",
+        type=str,
+        help="Path to a single video file for testing",
+    )
     args = parser.parse_args()
 
     # Ensure the output directory exists
@@ -158,4 +201,5 @@ if __name__ == "__main__":
         args.learning_rate,
         args.model_size,
         args.epochs,
+        args.single_video,
     )

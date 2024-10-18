@@ -1,7 +1,10 @@
+accelerate
+bitsandbytes
+matplotlib
 numpy
 opencv-python
-matplotlib
-torch
-transformers
+peft
 pytorch-lightning
+torch
 torchvision
+transformers>=4.45.2
