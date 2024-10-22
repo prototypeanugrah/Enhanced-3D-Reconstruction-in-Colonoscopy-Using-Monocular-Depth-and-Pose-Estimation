@@ -4,14 +4,14 @@ import argparse
 import logging
 import os
 
-from custom_dataset import CustomVideoDepthDataset
 from lightning_model import DepthEstimationModule
 from pytorch_lightning.loggers import TensorBoardLogger
-from torch.utils.data import DataLoader
-from torchvision import transforms
 
 import torch
 import pytorch_lightning as pl
+
+# import custom_dataset_frames
+import utils
 
 # Set float32 matrix multiplication precision to 'high' for better performance
 # on Tensor Cores
@@ -32,40 +32,28 @@ def main(
     lr: float,
     model_size: str,
     epochs: int,
-    single_video: str = None,
+    use_scheduler: bool = False,
+    warmup_steps: int = 500,
 ):
-    # Set up data
-    transform = transforms.Compose(
-        [
-            transforms.ToTensor(),
-            transforms.Resize((224, 224)),
-            transforms.Normalize(
-                mean=[0.485, 0.456, 0.406],
-                std=[0.229, 0.224, 0.225],
-            ),
-        ]
+    # Process the images and get the train and validation dataloaders
+    train_depth, train_rgb, val_depth, val_rgb = utils.process_images(
+        input_path,
     )
 
-    if single_video:
-        # Process a single video file
-        train_dataset = CustomVideoDepthDataset(
-            os.path.dirname(single_video),
-            transform=transform,
-            single_file=os.path.basename(single_video),
-        )
-        train_dataloader = DataLoader(
-            train_dataset,
-            batch_size=batch_size,
-            shuffle=False,
-            num_workers=2,
-        )
+    train_dataloader, val_dataloader = utils.get_dataloaders(
+        train_depth,
+        train_rgb,
+        val_depth,
+        val_rgb,
+        batch_size=batch_size,
+    )
 
-    # temp_dataset = CustomVideoDepthDataset(
+    # temp_dataset = CustomFrameDepthDataset(
     #     os.path.join(input_path, "val"),
     #     transform=ransform,
     # )
 
-    # normalize_transform = CustomVideoDepthDataset.get_normalization_transform(
+    # normalize_transform = CustomFrameDepthDataset.get_normalization_transform(
     #     temp_dataset
     # )
 
@@ -76,41 +64,79 @@ def main(
     #     ]
     # )
 
-    # train_dataset = CustomVideoDepthDataset(
+    # train_dataset = CustomFrameDepthDataset(
     #     os.path.join(input_path, "train"),
     #     transform=transform,
     # )
-    else:
+    # else:
 
-        train_dataset = CustomVideoDepthDataset(
-            os.path.join(input_path, "train"),
-            transform=transform,
-        )
-        train_dataloader = DataLoader(
-            train_dataset,
-            batch_size=batch_size,
-            shuffle=True,
-            num_workers=4,
-        )
-        val_dataset = CustomVideoDepthDataset(
-            os.path.join(input_path, "val"),
-            transform=transform,
-        )
-        val_dataloader = DataLoader(
-            val_dataset,
-            batch_size=batch_size,
-            shuffle=False,
-            num_workers=4,
-        )
+    # train_dataset = CustomFrameDepthDataset(
+    #     # os.path.join(input_path, "train"),
+    #     input_path,
+    #     transform=transform,
+    #     start_idx=0,
+    #     end_idx=500,
+    #     # max_frames=1358,
+    # )
+    # train_dataset = Dataset(
+    #     input_paths=train_imgs,
+    #     target_paths=train_maps,
+    #     transform_input=transform_input,
+    #     transform_target=transform_target,
+    #     hflip=True,
+    #     vflip=True,
+    #     affine=False,
+    # )
+
+    # val_dataset = Dataset(
+    #     input_paths=val_imgs,
+    #     target_paths=val_maps,
+    #     transform_input=transform_input,
+    #     transform_target=transform_target,
+    # )
+
+    # val_dataset = CustomFrameDepthDataset(
+    #     # os.path.join(input_path, "val"),
+    #     input_path,
+    #     transform=transform,
+    #     start_idx=0,
+    #     end_idx=500,
+    #     # max_frames=1358,
+    # )
+    # train_dataloader = data.DataLoader(
+    #     train_dataset,
+    #     batch_size=batch_size,
+    #     drop_last=True,
+    #     shuffle=True,
+    #     num_workers=4,
+    # )
+    # logger.info("Train dataloader created and processed")
+
+    # val_dataloader = data.DataLoader(
+    #     val_dataset,
+    #     batch_size=batch_size,
+    #     drop_last=False,
+    #     shuffle=False,
+    #     num_workers=4,
+    # )
+    # logger.info("Validation dataloader created and processed")
 
     # Set up model
     model = DepthEstimationModule(
         f"depth-anything/Depth-Anything-V2-{model_size}-hf",
         lr=lr,
+        use_scheduler=use_scheduler,
+        warmup_steps=warmup_steps,
     )
 
+    custom_model_name = f"pretrained_l{lr}_e{epochs}_b{batch_size}_m{model_size}_s{1 if use_scheduler else 0}_w{warmup_steps if warmup_steps else 0}"
+
     # Set up TensorBoard logger
-    tb_logger = TensorBoardLogger("tb_logs", name="depth_estimation")
+    tb_logger = TensorBoardLogger(
+        "tb_logs",
+        name="depth_estimation",
+        version=custom_model_name,
+    )
 
     # Set up trainer
     trainer = pl.Trainer(
@@ -120,6 +146,7 @@ def main(
         logger=tb_logger,
         callbacks=[pl.callbacks.ModelCheckpoint(monitor="val_loss")],
         accumulate_grad_batches=2,
+        log_every_n_steps=1,
     )
 
     # Train the model
@@ -130,7 +157,6 @@ def main(
     )
 
     # Save the fine-tuned model
-    custom_model_name = f"pretrained_l{lr}_e{epochs}_b{batch_size}_m{model_size}_s{1 if single_video else 0}"
     custom_output_path = os.path.join(output_path, custom_model_name)
     model.model.save_pretrained(custom_output_path)
     logger.info("Saved fine-tuned model to %s", custom_output_path)
@@ -173,7 +199,7 @@ if __name__ == "__main__":
         "--model_size",
         type=str,
         default="small",
-        choices=["small", "medium", "large"],
+        choices=["Small", "Base", "Large"],
         help="Size of the DepthAnythingV2 model to use",
     )
     parser.add_argument(
@@ -185,10 +211,19 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "-s",
-        "--single_video",
-        type=str,
-        help="Path to a single video file for testing",
+        "--use_scheduler",
+        type=bool,
+        default=False,
+        help="Learning Rate Scheduler",
     )
+    parser.add_argument(
+        "-w",
+        "--warmup_steps",
+        type=int,
+        default=500,
+        help="Number of warmup steps",
+    )
+
     args = parser.parse_args()
 
     # Ensure the output directory exists
@@ -201,5 +236,6 @@ if __name__ == "__main__":
         args.learning_rate,
         args.model_size,
         args.epochs,
-        args.single_video,
+        args.use_scheduler,
+        args.warmup_steps,
     )

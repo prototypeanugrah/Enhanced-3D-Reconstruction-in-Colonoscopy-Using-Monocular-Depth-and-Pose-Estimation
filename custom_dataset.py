@@ -4,8 +4,11 @@ import os
 
 from torch.utils.data import Dataset
 from torchvision import transforms
+from tqdm import tqdm
 
 import cv2
+import numpy as np
+import torch
 
 
 class CustomVideoDepthDataset(Dataset):
@@ -23,11 +26,23 @@ class CustomVideoDepthDataset(Dataset):
         video_dir,
         transform=None,
         single_file=None,
+        max_frames=None,
     ):
         self.video_dir = video_dir
         self.transform = transform
         self.single_file = single_file
-        self.frames = self._load_frames()
+        self.max_frames = max_frames
+
+        # Load video file paths, but do not load frames yet
+        if self.single_file:
+            self.video_files = [os.path.join(self.video_dir, self.single_file)]
+        else:
+            self.video_files = [
+                os.path.join(self.video_dir, f)
+                for f in os.listdir(self.video_dir)
+                if f.endswith((".mp4", ".avi"))
+            ]
+        # self.frames = self._load_frames()
 
     def _load_frames(self):
         """
@@ -41,10 +56,12 @@ class CustomVideoDepthDataset(Dataset):
             video_path = os.path.join(self.video_dir, self.single_file)
             frames.extend(self._extract_frames(video_path))
         else:
-            for video_file in os.listdir(self.video_dir):
-                if video_file.endswith((".mp4", ".avi")):
-                    video_path = os.path.join(self.video_dir, video_file)
-                    frames.extend(self._extract_frames(video_path))
+            video_files = [
+                f for f in os.listdir(self.video_dir) if f.endswith((".mp4", ".avi"))
+            ]
+            for video_file in tqdm(video_files, desc="Loading videos", unit="video"):
+                video_path = os.path.join(self.video_dir, video_file)
+                frames.extend(self._extract_frames(video_path))
         return frames
 
     def _extract_frames(self, video_path):
@@ -60,7 +77,7 @@ class CustomVideoDepthDataset(Dataset):
 
     def __len__(self):
         """Return the total number of video frames."""
-        return len(self.frames)
+        return len(self.video_files)
 
     def __getitem__(self, idx):
         """
@@ -72,14 +89,34 @@ class CustomVideoDepthDataset(Dataset):
         Returns:
             tuple: A tuple containing the video frame and its target.
         """
-        frame = self.frames[idx]
-        # frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        video_path = self.video_files[idx]
+
+        # Lazily load frames for the current video file
+        frames = self._extract_frames(video_path)
+
+        if self.max_frames is not None:
+            if len(frames) > self.max_frames:
+                # Truncate or randomly sample
+                frames = frames[: self.max_frames]
+                # frames = random.sample(frames, self.max_frames)
+            elif len(frames) < self.max_frames:
+                # Pad with zeros
+                padding = [
+                    np.zeros_like(frames[0])
+                    for _ in range(self.max_frames - len(frames))
+                ]
+                frames.extend(padding)
 
         if self.transform:
-            frame = self.transform(frame)
+            frames = [self.transform(frame) for frame in frames]
+
+        # Stack frames into a single tensor
+        frames_tensor = torch.stack(
+            [torch.from_numpy(f).float().to(torch.float16) for f in frames]
+        )
 
         # For fine-tuning, we'll use the original frame as both input and target
-        return frame, frame
+        return frames_tensor, frames_tensor
 
     @staticmethod
     def calculate_mean_std(dataset):
