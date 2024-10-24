@@ -4,7 +4,12 @@ import shutil
 from sklearn.model_selection import train_test_split
 
 
-def split_and_move_videos(input_dir, output_dir, train_ratio=0.7, val_ratio=0.15):
+def split_and_move_videos(
+    input_dir,
+    output_dir,
+    train_ratio=0.7,
+    val_ratio=0.15,
+):
     """
     Split videos into train, validation, and test sets and move them to
     respective directories.
@@ -36,32 +41,48 @@ def split_and_move_videos(input_dir, output_dir, train_ratio=0.7, val_ratio=0.15
     )
 
     # Create directories
-    train_dir = os.path.join(output_dir, "train")
-    val_dir = os.path.join(output_dir, "val")
-    test_dir = os.path.join(output_dir, "test")
+    train_path = os.path.join(output_dir, "train")
+    val_path = os.path.join(output_dir, "val")
+    test_path = os.path.join(output_dir, "test")
 
-    for directory in [train_dir, val_dir, test_dir]:
+    for directory in [train_path, val_path, test_path]:
         os.makedirs(directory, exist_ok=True)
 
     # Move files
     for video in train:
-        shutil.move(os.path.join(input_dir, video), os.path.join(train_dir, video))
+        shutil.move(
+            os.path.join(input_dir, video),
+            os.path.join(train_path, video),
+        )
     for video in val:
-        shutil.move(os.path.join(input_dir, video), os.path.join(val_dir, video))
+        shutil.move(
+            os.path.join(input_dir, video),
+            os.path.join(val_path, video),
+        )
     for video in test:
-        shutil.move(os.path.join(input_dir, video), os.path.join(test_dir, video))
+        shutil.move(
+            os.path.join(input_dir, video),
+            os.path.join(test_path, video),
+        )
 
-    return train_dir, val_dir, test_dir
+    return (
+        train_path,
+        val_path,
+        test_path,
+    )
 
 
 if __name__ == "__main__":
-    input_dir = "hyper-kvasir-videos/videos"
-    output_dir = "datasets/hyper-kvasir"
+    input_path = "hyper-kvasir-videos/videos"
+    output_path = "datasets/hyper-kvasir"
 
-    if not os.path.exists(output_dir):
-        os.makedirs(output_dir)
+    if not os.path.exists(output_path):
+        os.makedirs(output_path)
 
-    train_dir, val_dir, test_dir = split_and_move_videos(input_dir, output_dir)
+    train_dir, val_dir, test_dir = split_and_move_videos(
+        input_path,
+        output_path,
+    )
     print(f"Training videos saved in: {train_dir}")
     print(f"Validation videos saved in: {val_dir}")
     print(f"Test videos saved in: {test_dir}")
