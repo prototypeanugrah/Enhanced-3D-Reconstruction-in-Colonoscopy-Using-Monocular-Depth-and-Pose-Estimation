@@ -23,7 +23,20 @@ logger = logging.getLogger(__name__)
 os.environ["HF_HOME"] = "~/home/public/avaishna/.cache"
 
 
-def str2bool(v):
+def str2bool(v: str) -> bool:
+    """
+    Convert a string to a boolean.
+
+    Args:
+        v (str): The string to convert.
+
+    Raises:
+        argparse.ArgumentTypeError: If the string cannot be converted to a
+        boolean.
+
+    Returns:
+        bool: The boolean value.
+    """
     if isinstance(v, bool):
         return v
     if v.lower() in ("yes", "true", "t", "y", "1"):
@@ -32,6 +45,24 @@ def str2bool(v):
         return False
     else:
         raise argparse.ArgumentTypeError("Boolean value expected.")
+
+
+def count_parameters(model: torch.nn.Module) -> tuple:
+    """
+    Count the total and trainable parameters in a model.
+
+    Args:
+        model (torch.nn.Module): The model to count parameters for.
+
+    Returns:
+        tuple: A tuple containing the total parameters and trainable parameters.
+    """
+    total_params = sum(p.numel() for p in model.parameters())
+    trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    return (
+        total_params,
+        trainable_params,
+    )
 
 
 def main(
@@ -101,6 +132,11 @@ def main(
         use_scheduler=use_scheduler,
         warmup_steps=warmup_steps,
     )
+
+    # Count and print parameters
+    total_params, trainable_params = count_parameters(model.model)
+    logger.info("Total parameters: %d", total_params)
+    logger.info("Trainable parameters: %d", trainable_params)
 
     custom_model_name = f"pretrained_l{lr}_e{epochs}_b{batch_size}_m{model_size}_s{1 if use_scheduler else 0}_w{warmup_steps if warmup_steps else 0}"
 
