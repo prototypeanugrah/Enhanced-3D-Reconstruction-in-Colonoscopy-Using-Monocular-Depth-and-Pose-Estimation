@@ -15,6 +15,8 @@ The project uses the Hyper-Kvasir dataset, which is a comprehensive collection o
 - Visualization: Converts depth maps to heatmaps and creates overlay videos for better visualization.
 - Dataset splitting: Automatically splits the dataset into train, validation, and test sets.
 - Training: Supports fine-tuning of the DepthAnythingV2 model using PyTorch Lightning.
+- Evaluation: Includes metrics for evaluating the performance of the depth estimation model.
+
 
 ## Installation
 
@@ -42,7 +44,16 @@ Split the dataset into train, validation, and test sets:
 
 To fine-tune the model:
    ```
-   python train.py --input_dir datasets/hyper-kvasir --output_dir output --model_size small --epochs 10 --batch_size 4 --learning_rate 1e-4
+   python train.py
+   --input_dir <input_dir>
+   --output_dir <output_dir>
+   --model_size <model_size>
+   --epochs <num_epochs>
+   --batch_size <batch_size>
+   --learning_rate <learning_rate>
+   -s <use_scheduler>
+   -w <warmup_steps>
+   -ld <log_dir>
    ```
 
 Arguments:
@@ -52,33 +63,32 @@ Arguments:
 - `--epochs`: Number of training epochs
 - `--batch_size`: Batch size for training
 - `--learning_rate`: Learning rate for training
+- `-s`, `--use_scheduler`: Whether to use a learning rate scheduler (true/false)
+- `-w`, `--warmup_steps`: Number of warmup steps for the scheduler
+- `-ld`, `--logdir`: Directory for TensorBoard logs
 
-### Inference
-
-To process videos and generate depth maps:
+To run multiple experiments with different configurations:
    ```
-   python main_lightning.py --input input_path --output output_path --model_size small --limit 10
+   bash run_experiments.sh
    ```
-
-Arguments:
-- `--input`: Path to input video file or folder containing videos
-- `--output`: Path to output directory
-- `--model_size`: Size of the depth estimation model (small, base, large)
-- `--limit`: Limit the number of videos to process (optional)
 
 ## Code Structure
 
-- `main_lightning.py`: Main script for video processing and depth estimation
-- `train.py`: Script for fine-tuning the DepthAnythingV2 model
-- `dataset_split.py`: Script for splitting the dataset
-- `custom_dataset.py`: Custom dataset class for video frames
-- `data_processing.py`: Functions for video handling and data processing
-- `model_processing.py`: Functions for loading and applying the DepthAnythingV2 model
-- `lightning_model.py`: PyTorch Lightning module for the DepthAnythingV2 model
+- `train.py`: Main script for fine-tuning the DepthAnythingV2 model
+- `training/training_utils.py`: Utility functions and classes for training
+- `data_processing/dataloader.py`: Functions for creating data loaders
+- `data_processing/dataset.py`: Custom dataset class
+- `data_processing/convert_avi_to_mp4.py`: Script for converting AVI files to MP4
+- `eval/evaluation.py`: Functions for computing evaluation metrics
+- `utils/utils.py`: Utility functions for data processing and visualization
+- `run_experiments.sh`: Bash script for running multiple training experiments
 
 ## Dataset
 
-This project uses the Hyper-Kvasir dataset, a comprehensive collection of gastrointestinal endoscopy and videos. The dataset is licensed under a Creative Commons Attribution 4.0 International (CC BY 4.0) License.
+The challenge consisted of simulated colonoscopy data and images from real patients. This data release encompasses the synthetic portion of the challenge. The synthetic data includes three different anatomies derived from real human CT scans. Each anatomy provides several randomly generated trajectories with RGB renderings, camera intrinsics, ground truth depths, and ground truth poses. In total, this dataset includes more than 37,000 labelled images. 
+
+The real colonoscopy data used in the SimCol3D challenge consists of images extracted from the EndoMapper dataset.
+This dataset and accompanying files are licensed under a Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International (CC BY-NC-SA 4.0). https://creativecommons.org/licenses/by-nc-sa/4.0/
 
 ## License
 
@@ -86,7 +96,8 @@ This project is licensed under the MIT License. See the LICENSE file for details
 
 ## Acknowledgements
 
-- The Hyper-Kvasir dataset: [Hyper-Kvasir](https://osf.io/mkzcq/)
+<!-- - The Hyper-Kvasir dataset: [Hyper-Kvasir](https://osf.io/mkzcq/) -->
+- SimCol3D dataset: [SimCol3D](https://rdr.ucl.ac.uk/articles/dataset/Simcol3D_-_3D_Reconstruction_during_Colonoscopy_Challenge_Dataset/24077763?file=42248541)
 - DepthAnythingV2 model: [DepthAnythingV2](https://huggingface.co/depth-anything)
 
 ## Contributing

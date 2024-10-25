@@ -1,10 +1,14 @@
 accelerate
 bitsandbytes
+cv2
 matplotlib
 numpy
 opencv-python
+Pillow
 peft
-pytorch-lightning
+scikit-learn
+tqdm
+# pytorch-lightning
 torch
 torchvision
 transformers>=4.45.2
