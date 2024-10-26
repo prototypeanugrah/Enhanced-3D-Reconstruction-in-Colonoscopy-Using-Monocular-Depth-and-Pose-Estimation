@@ -23,7 +23,9 @@ logger = logging.getLogger(__name__)
 os.environ["HF_HOME"] = "~/home/public/avaishna/.cache"
 
 
-def str2bool(v: str) -> bool:
+def str2bool(
+    v: str,
+) -> bool:
     """
     Convert a string to a boolean.
 
@@ -47,7 +49,9 @@ def str2bool(v: str) -> bool:
         raise argparse.ArgumentTypeError("Boolean value expected.")
 
 
-def count_parameters(model: torch.nn.Module) -> tuple:
+def count_parameters(
+    model: torch.nn.Module,
+) -> tuple:
     """
     Count the total and trainable parameters in a model.
 

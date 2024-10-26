@@ -31,7 +31,10 @@ def get_dataloaders(
     transform_input = transforms.Compose(
         [
             transforms.ToTensor(),
-            transforms.Resize((352, 352), antialias=True),
+            transforms.Resize(
+                (352, 352),
+                antialias=True,
+            ),
             transforms.Normalize(
                 mean=[0.485, 0.456, 0.406],
                 std=[0.229, 0.224, 0.225],
