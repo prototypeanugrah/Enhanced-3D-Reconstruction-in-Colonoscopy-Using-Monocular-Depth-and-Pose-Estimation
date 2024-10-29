@@ -19,6 +19,7 @@ from peft import LoraConfig, get_peft_model
 from torch import nn
 from torch import amp
 from torch.optim import lr_scheduler
+from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 from transformers import (
     AutoModelForDepthEstimation,
@@ -52,9 +53,7 @@ class DepthEstimationModule(nn.Module):
     def __init__(
         self,
         model_name: str,
-        lr: float = 1e-3,
-        use_scheduler: bool = True,
-        warmup_steps: int = 1000,
+        lora_r: int = 4,
     ):
         super().__init__()
 
@@ -73,13 +72,13 @@ class DepthEstimationModule(nn.Module):
 
         # LoRA configuration
         lora_config = LoraConfig(
-            r=16,
+            r=lora_r,
             lora_alpha=32,
             target_modules=[
                 "query",
                 "value",
             ],
-            lora_dropout=0.05,
+            lora_dropout=0.1,
             bias="none",
             task_type="DEPTH_ESTIMATION",
             init_lora_weights=True,
@@ -88,17 +87,67 @@ class DepthEstimationModule(nn.Module):
         self.model = get_peft_model(self.model, lora_config)
 
         self.processor = AutoImageProcessor.from_pretrained(model_name)
-        self.lr = lr
-        self.use_scheduler = use_scheduler
-        self.warmup_steps = warmup_steps
+        self.image_size = self.processor.size
 
         # Freeze all parameters except LoRA parameters
         for name, param in self.model.named_parameters():
             if "lora" not in name:
                 param.requires_grad = False
 
-    def forward(self, x) -> torch.Tensor:
+    def forward(
+        self,
+        x: torch.Tensor,
+    ) -> torch.Tensor:
+        """
+        Forward pass of the model.
+
+        Args:
+            x: Input images tensor of shape (B, C, H, W)
+
+        Returns:
+            Model output
+        """
+        # Preprocess the input if it hasn't been processed yet
+        if x.shape[-2:] != (
+            self.image_size["height"],
+            self.image_size["width"],
+        ):
+            x = self.preprocess(x)
         return self.model(x)
+
+    def preprocess(
+        self,
+        images: torch.Tensor,
+    ) -> torch.Tensor:
+        """
+        Preprocess images using the model's processor.
+
+        Args:
+            images: Input images tensor of shape (B, C, H, W)
+
+        Returns:
+            Preprocessed images tensor
+        """
+        # Normalize the input tensor to [0, 1] range before processing
+        images = (images - images.min()) / (images.max() - images.min())
+
+        # Process images using the processor
+        processed = self.processor(
+            images=images,
+            return_tensors="pt",
+            do_rescale=False,
+        )
+        return processed.pixel_values
+
+    @property
+    def target_size(self):
+        """
+        Returns the expected size of the input/output images.
+        """
+        return (
+            self.image_size["height"],
+            self.image_size["width"],
+        )
 
 
 class WarmupReduceLROnPlateau:
@@ -109,7 +158,7 @@ class WarmupReduceLROnPlateau:
     def __init__(
         self,
         optimizer: torch.optim.Optimizer,
-        warmup_steps: int,
+        warmup_steps: int = 500,
         factor: float = 0.1,
         patience: int = 5,
         verbose: bool = True,
@@ -274,7 +323,7 @@ def validate(
     val_loader: torch.utils.data.DataLoader,
     epoch: int,
     device: torch.device,
-    writer: torch.utils.tensorboard.SummaryWriter,
+    writer: SummaryWriter,
 ) -> float:
     """
     Validate the model on the validation set.
@@ -358,6 +407,7 @@ def train(
     model.train()
     scaler = amp.GradScaler()
     train_loss = 0.0
+    train_metrics = {}
     with tqdm(
         train_loader,
         desc=f"Training Epoch {epoch+1}",
@@ -383,18 +433,30 @@ def train(
             scaler.step(optimizer)
             scaler.update()
             train_loss += loss.item()
+            for k, v in metrics.items():
+                train_metrics[k] = train_metrics.get(k, 0) + v
 
             # Update progress bar
             pbar.set_postfix({"loss": loss.item()})
 
             # Log training metrics
-            writer.add_scalar(
-                "Train/Loss",
-                loss.item(),
-                epoch * len(train_loader) + batch_idx,
-            )
+            if batch_idx % 100 == 0:
+                writer.add_scalar(
+                    "Train/Loss",
+                    loss.item(),
+                    epoch * len(train_loader) + batch_idx,
+                )
 
     train_loss /= len(train_loader)
+
+    # Log the error metrics
+    train_metrics = {k: v / len(train_loader) for k, v in train_metrics.items()}
+    for k, v in train_metrics.items():
+        writer.add_scalar(
+            f"Train/{k}",
+            v,
+            epoch,
+        )
     return train_loss
 
 
@@ -418,17 +480,23 @@ def train_step(
     inputs = inputs.to(device, dtype=torch.float16)
     targets = targets.to(device, dtype=torch.float16)
 
-    outputs = model(inputs).predicted_depth  # Shape: (batch_size, H, W)
+    # Get model's target size
+    target_h, target_w = targets.shape[-2:]  # Get target dimensions
 
-    # Resize the output to match the target size
+    outputs = model(inputs).predicted_depth  # Shape: (batch_size, H, W)
+    # print(f"Output shape before interpolate: {outputs.shape}")
+
+    # Resize the output to match the target size if necessary
     outputs = F.interpolate(
         outputs.unsqueeze(1),
-        size=targets.shape[-2:],
+        size=(target_h, target_w),
         mode="bilinear",
-        align_corners=False,
+        align_corners=True,
     ).squeeze(
         1
     )  # Shape: (batch_size, H, W)
+    # print(f"Target shape: {targets.shape}")
+    # print(f"Output shape after interpolate: {outputs.shape}")
 
     # If the target has 3 dimensions, add the channel dimension
     if targets.dim() == 3:
@@ -439,7 +507,21 @@ def train_step(
         outputs = outputs.unsqueeze(1)  # Shape: (batch_size, 1, H, W)
 
     # Compute the MSE loss
-    loss = nn.MSELoss()(outputs, targets)
+    mask = (targets <= 20) & (targets >= 0.001)
+    mask = mask.to(device)
+    outputs = outputs.to(device)  # Ensure outputs is on the same device
+    targets = targets.to(device)  # Ensure targets is on the same device
+    # print(f"{targets.shape}, {outputs.shape}, {mask.shape}")
+    loss = nn.MSELoss()(
+        outputs[mask],
+        targets[mask],
+    )
+
+    # Compute metrics
+    metrics = evaluation.compute_errors(
+        outputs[mask],
+        targets[mask],
+    )
 
     # Force backward pass through LoRA layers
     lora_params = [p for n, p in model.named_parameters() if "lora_" in n]
@@ -450,7 +532,6 @@ def train_step(
         retain_graph=True,
     )
 
-    metrics = evaluation.compute_errors(outputs, targets)
     return (
         loss,
         metrics,
@@ -477,13 +558,16 @@ def validate_step(
     inputs = inputs.to(device, dtype=torch.float16)
     targets = targets.to(device, dtype=torch.float16)
 
+    # Get model's target size
+    target_h, target_w = targets.shape[-2:]  # Get target dimensions
+
     with torch.no_grad():
         outputs = model(inputs).predicted_depth
         outputs = F.interpolate(
             outputs.unsqueeze(1),
-            size=targets.shape[-2:],
+            size=(target_h, target_w),
             mode="bilinear",
-            align_corners=False,
+            align_corners=True,
         ).squeeze(1)
 
         # If the target has 3 dimensions, add the channel dimension
@@ -494,8 +578,19 @@ def validate_step(
         if outputs.dim() == 3:
             outputs = outputs.unsqueeze(1)
 
-        loss = nn.MSELoss()(outputs, targets)
-        metrics = evaluation.compute_errors(outputs, targets)
+        mask = (targets <= 20) & (targets >= 0.001)
+        # mask = mask.to(device)
+        # outputs = outputs.to(device)  # Ensure outputs is on the same device
+        # targets = targets.to(device)  # Ensure targets is on the same device
+
+        loss = nn.MSELoss()(
+            outputs[mask],
+            targets[mask],
+        )
+        metrics = evaluation.compute_errors(
+            outputs[mask],
+            targets[mask],
+        )
 
     return (
         loss,

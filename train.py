@@ -49,26 +49,6 @@ def str2bool(
         raise argparse.ArgumentTypeError("Boolean value expected.")
 
 
-def count_parameters(
-    model: torch.nn.Module,
-) -> tuple:
-    """
-    Count the total and trainable parameters in a model.
-
-    Args:
-        model (torch.nn.Module): The model to count parameters for.
-
-    Returns:
-        tuple: A tuple containing the total parameters and trainable parameters.
-    """
-    total_params = sum(p.numel() for p in model.parameters())
-    trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
-    return (
-        total_params,
-        trainable_params,
-    )
-
-
 def main(
     input_path: str,
     output_path: str,
@@ -135,11 +115,6 @@ def main(
         model_name=f"depth-anything/Depth-Anything-V2-{model_size}-hf",
         lora_r=lora_r,
     )
-
-    # Count and print parameters
-    total_params, trainable_params = count_parameters(model.model)
-    logger.info("Total parameters: %d", total_params)
-    logger.info("Trainable parameters: %d", trainable_params)
 
     custom_model_name = f"pretrained_l{lr}_e{epochs}_b{batch_size}_m{model_size}_lora{lora_r}_w{warmup_steps if warmup_steps else 0}"
 

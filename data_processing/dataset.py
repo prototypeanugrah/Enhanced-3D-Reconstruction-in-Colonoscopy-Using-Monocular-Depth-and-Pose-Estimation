@@ -58,15 +58,20 @@ class Dataset(data.Dataset):
         target_id = self.target_paths[index]
 
         # Change this line
-        x = Image.open(input_id).convert("RGB")
-        # x = np.array(Image.open(input_ID))[:, :, :3].astype(np.float32)
-        y = np.array(Image.open(target_id)) / 255 / 256
+        # x = Image.open(input_id).convert("RGB")
+        x = cv2.imread(input_id)
+        x = cv2.cvtColor(x, cv2.COLOR_BGR2RGB)
+        # y = np.array(Image.open(target_id)) / 255 / 256
+        y = cv2.imread(target_id, cv2.IMREAD_UNCHANGED).astype(
+            np.float32
+        )  # Read as-is without any conversion
+        y /= 255.0 * 256.0  # Convert to float and normalize
 
-        # Resize y to 352x352 using OpenCV
+        # Resize y to 350x350 using OpenCV
         y = cv2.resize(
             y,
-            (352, 352),
-            interpolation=cv2.INTER_LINEAR,
+            (350, 350),
+            interpolation=cv2.INTER_CUBIC,
         )
 
         # Apply transforms
@@ -75,8 +80,6 @@ class Dataset(data.Dataset):
 
         # Convert y to tensor
         y = torch.from_numpy(y).float()
-        # if self.transform_target:
-        #     y = self.transform_target(y)
 
         if self.hflip:
             if random.uniform(0.0, 1.0) > 0.5:
@@ -90,8 +93,8 @@ class Dataset(data.Dataset):
 
         if self.affine:
             angle = random.uniform(-180.0, 180.0)
-            h_trans = random.uniform(-352 / 8, 352 / 8)
-            v_trans = random.uniform(-352 / 8, 352 / 8)
+            h_trans = random.uniform(-350 / 8, 350 / 8)
+            v_trans = random.uniform(-350 / 8, 350 / 8)
             scale = random.uniform(0.5, 1.5)
             shear = random.uniform(-22.5, 22.5)
             x = TF.affine(
@@ -114,3 +117,20 @@ class Dataset(data.Dataset):
             x.float(),
             y.float(),
         )
+
+
+class Dataset_test(data.Dataset):
+    def __init__(self, input_paths: list, transform_input=None):
+        self.input_paths = input_paths
+        self.transform_input = transform_input
+
+    def __len__(self):
+        return len(self.input_paths)
+
+    def __getitem__(self, index: int):
+        input_ID = self.input_paths[index]
+
+        x = np.array(Image.open(input_ID))[:, :, :3]
+        x = self.transform_input(x)
+
+        return x.float()

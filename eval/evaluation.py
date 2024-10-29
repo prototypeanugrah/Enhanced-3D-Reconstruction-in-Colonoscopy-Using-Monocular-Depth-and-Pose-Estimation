@@ -1,7 +1,6 @@
 "Module for the evaluation metrics"
 
 import torch
-import torch.nn.functional as F
 
 
 def compute_errors(
@@ -18,27 +17,18 @@ def compute_errors(
     Returns:
         dict: Dictionary containing the computed metrics
     """
-    # Ensure pred and gt have the same shape
-    pred = F.interpolate(
-        pred,
-        size=gt.shape[-2:],
-        mode="bilinear",
-        align_corners=False,
-    )
+    assert pred.shape == gt.shape  # Shape 1D tensor
 
-    # Ensure pred has the same number of dimensions as gt
-    if pred.dim() == 4 and gt.dim() == 3:
-        pred = pred.squeeze(1)
+    # * 20 to get centimeters
+    diff = (pred - gt) * 20
+    epsilon = 1e-6  # Small positive constant
 
-    # # Mask out invalid ground truth values (e.g., zeros)
-    # mask = gt > 0
-    # pred = pred[mask]
-    # gt = gt[mask]
-
-    diff = pred - gt
-
-    abs_rel = torch.mean(torch.abs(diff) / gt)  # Absolute relative error
-    sq_rel = torch.mean(torch.pow(diff, 2) / gt) * 1000  # Squared relative error
+    abs_rel = torch.mean(
+        torch.abs(diff) / (gt * 20 + epsilon)
+    )  # Absolute relative error
+    # sq_rel = (
+    #     torch.mean(torch.pow(diff, 2) / (gt + epsilon)) * 1000
+    # )  # Squared relative error
 
     rmse = torch.sqrt(torch.mean(torch.pow(diff, 2)))  # Root mean squared error
 
@@ -51,7 +41,7 @@ def compute_errors(
 
     return {
         "abs_rel": abs_rel.item(),
-        "sq_rel": sq_rel.item(),
+        # "sq_rel": sq_rel.item(),
         "rmse": rmse.item(),
         "delta_1_1": delta_1_1.item(),
     }

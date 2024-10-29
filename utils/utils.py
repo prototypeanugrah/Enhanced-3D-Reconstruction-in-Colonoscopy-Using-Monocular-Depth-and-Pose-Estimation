@@ -3,6 +3,7 @@
 import logging
 import os
 
+import matplotlib.pyplot as plt
 import numpy as np
 
 
@@ -29,7 +30,7 @@ def depth_to_heatmap(
     depth_normalized = (depth - np.min(depth)) / (np.max(depth) - np.min(depth))
 
     # Apply the colormap
-    cmap = plt.get_cmap("plasma")
+    cmap = plt.get_cmap("Spectral_r")
     heatmap = cmap(depth_normalized)
 
     # Convert to RGB and uint8
@@ -142,7 +143,7 @@ def process_images(
         val_depth.extend(depth)
         val_rgb.extend(rgb)
 
-    # Load validation frames
+    # Load test frames
     for vid in test_vids:
         depth, rgb = load_frames(vid)
         test_depth.extend(depth)

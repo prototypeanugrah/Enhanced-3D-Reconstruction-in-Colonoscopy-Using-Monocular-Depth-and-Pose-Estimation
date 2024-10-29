@@ -32,7 +32,7 @@ def get_dataloaders(
         [
             transforms.ToTensor(),
             transforms.Resize(
-                (352, 352),
+                (350, 350),
                 antialias=True,
             ),
             transforms.Normalize(
@@ -45,7 +45,7 @@ def get_dataloaders(
     # transform_target = transforms.ToTensor()
     transform_target = transforms.Compose(
         [
-            transforms.Resize((352, 352)),
+            transforms.Resize((350, 350)),
             transforms.ToTensor(),
         ]
     )
@@ -73,6 +73,9 @@ def get_dataloaders(
         shuffle=True,
         drop_last=True,
         num_workers=8,
+        pin_memory=True,  # Faster data transfer to GPU
+        persistent_workers=True,  # Keep workers alive between epochs
+        prefetch_factor=1,  # Prefetch next batches
     )
 
     val_dataloader = data.DataLoader(
@@ -81,9 +84,44 @@ def get_dataloaders(
         shuffle=False,
         drop_last=False,
         num_workers=8,
+        pin_memory=True,
+        persistent_workers=True,
+        prefetch_factor=1,
     )
 
     return (
         train_dataloader,
         val_dataloader,
     )
+
+
+def get_dataloaders_test(imgs):
+
+    transform_input = transforms.Compose(
+        [
+            transforms.ToTensor(),
+            transforms.Resize(
+                (350, 350),
+                antialias=True,
+            ),
+            transforms.Normalize(
+                mean=[0.485, 0.456, 0.406],
+                std=[0.229, 0.224, 0.225],
+            ),
+        ]
+    )
+
+    test_dataset = dataset.Dataset_test(
+        input_paths=imgs,
+        transform_input=transform_input,
+    )
+
+    dataloader = data.DataLoader(
+        dataset=test_dataset,
+        batch_size=1,
+        shuffle=False,
+        drop_last=False,
+        num_workers=8,
+    )
+
+    return dataloader
