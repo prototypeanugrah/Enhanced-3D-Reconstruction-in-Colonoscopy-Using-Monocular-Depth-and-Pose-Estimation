@@ -1,6 +1,14 @@
 "Module for the evaluation metrics"
 
+import logging
+
 import torch
+
+# Setup logger
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
+)
+logger = logging.getLogger(__name__)
 
 
 def compute_errors(
@@ -19,6 +27,12 @@ def compute_errors(
     """
     assert pred.shape == gt.shape  # Shape 1D tensor
 
+    # Add checks for NaN and Inf values
+    if torch.isnan(pred).any():
+        logger.warning("NaN values detected in predictions")
+    if torch.isinf(pred).any():
+        logger.warning("Inf values detected in predictions")
+
     # * 20 to get centimeters
     diff = (pred - gt) * 20
     epsilon = 1e-6  # Small positive constant
@@ -26,9 +40,6 @@ def compute_errors(
     abs_rel = torch.mean(
         torch.abs(diff) / (gt * 20 + epsilon)
     )  # Absolute relative error
-    # sq_rel = (
-    #     torch.mean(torch.pow(diff, 2) / (gt + epsilon)) * 1000
-    # )  # Squared relative error
 
     rmse = torch.sqrt(torch.mean(torch.pow(diff, 2)))  # Root mean squared error
 
@@ -41,7 +52,6 @@ def compute_errors(
 
     return {
         "abs_rel": abs_rel.item(),
-        # "sq_rel": sq_rel.item(),
         "rmse": rmse.item(),
         "delta_1_1": delta_1_1.item(),
     }

@@ -75,7 +75,6 @@ def get_dataloaders(
         num_workers=8,
         pin_memory=True,  # Faster data transfer to GPU
         persistent_workers=True,  # Keep workers alive between epochs
-        prefetch_factor=1,  # Prefetch next batches
     )
 
     val_dataloader = data.DataLoader(
@@ -86,7 +85,6 @@ def get_dataloaders(
         num_workers=8,
         pin_memory=True,
         persistent_workers=True,
-        prefetch_factor=1,
     )
 
     return (

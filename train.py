@@ -110,10 +110,14 @@ def main(
         batch_size=batch_size,
     )
 
+    # Train the model
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
     # Set up model
     model = training_utils.DepthEstimationModule(
         model_name=f"depth-anything/Depth-Anything-V2-{model_size}-hf",
         lora_r=lora_r,
+        device=device,
     )
 
     custom_model_name = f"pretrained_l{lr}_e{epochs}_b{batch_size}_m{model_size}_lora{lora_r}_w{warmup_steps if warmup_steps else 0}"
@@ -131,6 +135,7 @@ def main(
         [p for n, p in model.named_parameters() if "lora_" in n],
         lr=lr,
     )
+
     scheduler = (
         training_utils.WarmupReduceLROnPlateau(
             optimizer,
@@ -148,9 +153,6 @@ def main(
         verbose=True,
         path=os.path.join(output_path, f"{custom_model_name}_checkpoint.pt"),
     )
-
-    # Train the model
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     for epoch in range(epochs):
         train_loss = training_utils.train(
@@ -286,7 +288,7 @@ if __name__ == "__main__":
         "-ld",
         "--logdir",
         type=str,
-        required=True,
+        # required=True,
         help="Tensorboard logging directory",
     )
 
