@@ -44,20 +44,19 @@ class DepthEstimationModule(nn.Module):
 
     Args:
         model_name (str): The name of the model to use for depth estimation.
-        lr (float): The learning rate for the optimizer. Default is 1e-3.
-        use_scheduler (bool): Whether to use a learning rate scheduler.
-        Default is True.
-        warmup_steps (int): The number of warmup steps for the scheduler.
+        lora_r (int, optional): The LoRA rank value to use. Defaults to 4.
+        device (str, optional): The device to use for training. Defaults to "cuda".
     """
 
     def __init__(
         self,
         model_name: str,
         lora_r: int = 4,
+        device: str = "cuda",
     ):
         super().__init__()
 
-        # Quantization configuration
+        # Quantization configuration (Q-LoRA config)
         bnb_config = BitsAndBytesConfig(
             load_in_4bit=True,
             bnb_4bit_use_double_quant=True,
@@ -83,11 +82,16 @@ class DepthEstimationModule(nn.Module):
             task_type="DEPTH_ESTIMATION",
             init_lora_weights=True,
         )
+
         # Apply LoRA to the model
         self.model = get_peft_model(self.model, lora_config)
+        self.model.to(device)
 
+        # Print trainable parameters
+        self.print_trainable_parameters()
+
+        # Load the image processor
         self.processor = AutoImageProcessor.from_pretrained(model_name)
-        self.image_size = self.processor.size
 
         # Freeze all parameters except LoRA parameters
         for name, param in self.model.named_parameters():
@@ -107,12 +111,8 @@ class DepthEstimationModule(nn.Module):
         Returns:
             Model output
         """
-        # Preprocess the input if it hasn't been processed yet
-        if x.shape[-2:] != (
-            self.image_size["height"],
-            self.image_size["width"],
-        ):
-            x = self.preprocess(x)
+        # Preprocess the input images and move to the device
+        x = self.preprocess(x).to(next(self.model.parameters()).device)
         return self.model(x)
 
     def preprocess(
@@ -129,7 +129,7 @@ class DepthEstimationModule(nn.Module):
             Preprocessed images tensor
         """
         # Normalize the input tensor to [0, 1] range before processing
-        images = (images - images.min()) / (images.max() - images.min())
+        images = (images - images.min()) / (images.max() - images.min() + 1e-8)
 
         # Process images using the processor
         processed = self.processor(
@@ -139,14 +139,20 @@ class DepthEstimationModule(nn.Module):
         )
         return processed.pixel_values
 
-    @property
-    def target_size(self):
-        """
-        Returns the expected size of the input/output images.
-        """
-        return (
-            self.image_size["height"],
-            self.image_size["width"],
+    def print_trainable_parameters(self):
+        """Helper method to print trainable parameter info"""
+        trainable_params = 0
+        all_param = 0
+        for _, param in self.model.named_parameters():
+            num_params = param.numel()
+            all_param += num_params
+            if param.requires_grad:
+                trainable_params += num_params
+        logger.info(
+            "Trainable params: %d || all params: %d || trainable (perc) %.2f",
+            trainable_params,
+            all_param,
+            100 * trainable_params / all_param,
         )
 
 
@@ -338,11 +344,12 @@ def validate(
     Returns:
         float: Validation loss.
     """
-    model.to(device)
 
     model.eval()
+
     val_loss = 0.0
     val_metrics = {}
+
     with tqdm(
         val_loader,
         desc=f"Validation Epoch {epoch+1}",
@@ -362,8 +369,6 @@ def validate(
     val_loss /= len(val_loader)
 
     val_metrics = {k: v / len(val_loader) for k, v in val_metrics.items()}
-    # for k, v in val_metrics.items():
-    #     logger.info("Val %s: %.4f", k, v)
 
     # Log validation metrics
     writer.add_scalar(
@@ -388,6 +393,7 @@ def train(
     optimizer: torch.optim.Optimizer,
     device: torch.device,
     writer: torch.utils.tensorboard.SummaryWriter,
+    draft: bool = False,
 ) -> float:
     """
     Train the model on the validation set.
@@ -402,12 +408,13 @@ def train(
     Returns:
         float: Train loss.
     """
-    model.to(device)
 
     model.train()
+
     scaler = amp.GradScaler()
     train_loss = 0.0
     train_metrics = {}
+
     with tqdm(
         train_loader,
         desc=f"Training Epoch {epoch+1}",
@@ -432,6 +439,7 @@ def train(
 
             scaler.step(optimizer)
             scaler.update()
+
             train_loss += loss.item()
             for k, v in metrics.items():
                 train_metrics[k] = train_metrics.get(k, 0) + v
@@ -476,42 +484,42 @@ def train_step(
     Returns:
         tuple: A tuple containing the loss and metrics.
     """
+
+    # The last layer in our model is a sigmoid for each pixel, producing an
+    # output from 0 to 1. We simply multiply each pixel by "max_depth" to
+    # represent distances from 0 to "max_depth".
+    max_depth = 20.0
     inputs, targets = batch  # Shape: (batch_size, 3, H, W), (batch_size, H, W)
+
+    # Move the inputs and targets to the device and cast to float16
     inputs = inputs.to(device, dtype=torch.float16)
     targets = targets.to(device, dtype=torch.float16)
 
-    # Get model's target size
-    target_h, target_w = targets.shape[-2:]  # Get target dimensions
-
     outputs = model(inputs).predicted_depth  # Shape: (batch_size, H, W)
-    # print(f"Output shape before interpolate: {outputs.shape}")
+
+    # Add check for NaN/Inf values
+    if torch.isnan(outputs).any() or torch.isinf(outputs).any():
+        logger.warning("Model produced NaN or Inf values in outputs")
 
     # Resize the output to match the target size if necessary
-    outputs = F.interpolate(
-        outputs.unsqueeze(1),
-        size=(target_h, target_w),
-        mode="bilinear",
-        align_corners=True,
-    ).squeeze(
-        1
+    outputs = (
+        F.interpolate(
+            outputs.unsqueeze(1),
+            size=targets.shape[-2:],  # Match the target size
+            mode="bilinear",
+            align_corners=True,
+        )
+        .squeeze(1)
+        .to(dtype=torch.float16)
     )  # Shape: (batch_size, H, W)
-    # print(f"Target shape: {targets.shape}")
-    # print(f"Output shape after interpolate: {outputs.shape}")
 
-    # If the target has 3 dimensions, add the channel dimension
-    if targets.dim() == 3:
-        targets = targets.unsqueeze(1)  # Shape: (batch_size, 1, H, W)
+    assert outputs.shape == targets.shape, "Training: Output and target shape mismatch", f'Output shape: {outputs.shape}', f'Target shape: {targets.shape}'
 
-    # If the output has 3 dimensions, add the channel dimension
-    if outputs.dim() == 3:
-        outputs = outputs.unsqueeze(1)  # Shape: (batch_size, 1, H, W)
+    mask = (targets <= max_depth) & (
+        targets >= 0.001 # Avoid division by zero
+    )  # Mask for valid depth values
 
     # Compute the MSE loss
-    mask = (targets <= 20) & (targets >= 0.001)
-    mask = mask.to(device)
-    outputs = outputs.to(device)  # Ensure outputs is on the same device
-    targets = targets.to(device)  # Ensure targets is on the same device
-    # print(f"{targets.shape}, {outputs.shape}, {mask.shape}")
     loss = nn.MSELoss()(
         outputs[mask],
         targets[mask],
@@ -554,34 +562,39 @@ def validate_step(
     Returns:
         tuple: A tuple containing the loss and metrics.
     """
+
+    # The last layer in our model is a sigmoid for each pixel, producing an
+    # output from 0 to 1. We simply multiply each pixel by "max_depth" to
+    # represent distances from 0 to "max_depth".
+    max_depth = 20.0
     inputs, targets = batch
+
+    # Move the inputs and targets to the device and cast to float16
     inputs = inputs.to(device, dtype=torch.float16)
     targets = targets.to(device, dtype=torch.float16)
 
-    # Get model's target size
-    target_h, target_w = targets.shape[-2:]  # Get target dimensions
-
     with torch.no_grad():
         outputs = model(inputs).predicted_depth
-        outputs = F.interpolate(
-            outputs.unsqueeze(1),
-            size=(target_h, target_w),
-            mode="bilinear",
-            align_corners=True,
-        ).squeeze(1)
 
-        # If the target has 3 dimensions, add the channel dimension
-        if targets.dim() == 3:
-            targets = targets.unsqueeze(1)
+        # Resize the output to match the target size if necessary
+        outputs = (
+            F.interpolate(
+                outputs.unsqueeze(1),
+                size=targets.shape[-2:],
+                mode="bilinear",
+                align_corners=True,
+            )
+            .squeeze(1)
+            .to(dtype=torch.float16)
+        )
 
-        # If the output has 3 dimensions, add the channel dimension
-        if outputs.dim() == 3:
-            outputs = outputs.unsqueeze(1)
+        assert (
+            outputs.shape == targets.shape
+        ), "Validation: Output and target shape mismatch"
 
-        mask = (targets <= 20) & (targets >= 0.001)
-        # mask = mask.to(device)
-        # outputs = outputs.to(device)  # Ensure outputs is on the same device
-        # targets = targets.to(device)  # Ensure targets is on the same device
+        mask = (targets <= max_depth) & (
+            targets >= 0.001  # Avoid division by zero
+        )  # Mask for valid depth values
 
         loss = nn.MSELoss()(
             outputs[mask],
