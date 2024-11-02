@@ -13,6 +13,7 @@ after a given patience.
 - validate_step: Function for a single validation step.
 """
 
+from typing import Dict, List, Union
 import logging
 
 from peft import LoraConfig, get_peft_model
@@ -24,7 +25,8 @@ from tqdm import tqdm
 from transformers import (
     AutoModelForDepthEstimation,
     AutoImageProcessor,
-    BitsAndBytesConfig,
+    # BitsAndBytesConfig,
+    # Trainer,
 )
 import torch
 import torch.nn.functional as F
@@ -87,20 +89,25 @@ class DepthEstimationModule(nn.Module):
         self.model = get_peft_model(self.model, lora_config)
         self.model.to(device)
 
-        # Print trainable parameters
-        self.print_trainable_parameters()
-
         # Load the image processor
         self.processor = AutoImageProcessor.from_pretrained(model_name)
 
-        # Freeze all parameters except LoRA parameters
+        # Freeze base model parameters
+        for param in self.model.base_model.parameters():
+            param.requires_grad = False
+
+        # Unfreeze LoRA parameters
         for name, param in self.model.named_parameters():
-            if "lora" not in name:
-                param.requires_grad = False
+            if "lora_" in name:
+                param.requires_grad = True
+
+        # Print trainable parameters
+        self.print_trainable_parameters()
+        self.enable_input_require_grads()
 
     def forward(
         self,
-        x: torch.Tensor,
+        x: torch.Tensor = None,
     ) -> torch.Tensor:
         """
         Forward pass of the model.
@@ -111,9 +118,17 @@ class DepthEstimationModule(nn.Module):
         Returns:
             Model output
         """
+
         # Preprocess the input images and move to the device
         x = self.preprocess(x).to(next(self.model.parameters()).device)
         return self.model(x)
+    
+    def enable_input_require_grads(self):
+    """Enable input requires_grad for better gradient flow"""
+    def make_inputs_require_grad(module, input, output):
+        output.requires_grad_(True)
+    
+    self.model.get_input_embeddings().register_forward_hook(make_inputs_require_grad)
 
     def preprocess(
         self,
@@ -140,20 +155,28 @@ class DepthEstimationModule(nn.Module):
         return processed.pixel_values
 
     def print_trainable_parameters(self):
-        """Helper method to print trainable parameter info"""
-        trainable_params = 0
-        all_param = 0
-        for _, param in self.model.named_parameters():
+        """Print detailed information about model parameters"""
+        lora_params = 0
+        all_params = 0
+        for name, param in self.model.named_parameters():
             num_params = param.numel()
-            all_param += num_params
-            if param.requires_grad:
-                trainable_params += num_params
+            all_params += num_params
+            if "lora_" in name:
+                lora_params += num_params
+            # logger.info(
+            #     "LoRA parameter: %s, Shape: %s, Requires grad: %s",
+            #     name,
+            #     param.shape,
+            #     param.requires_grad,
+            # )
+
         logger.info(
-            "Trainable params: %d || all params: %d || trainable (perc) %.2f",
-            trainable_params,
-            all_param,
-            100 * trainable_params / all_param,
+            "Total LoRA parameters: %d || Total parameters: %d || LoRA percentage: %.2f%%",
+            lora_params,
+            all_params,
+            100 * lora_params / all_params,
         )
+
 
 
 class WarmupReduceLROnPlateau:
@@ -324,6 +347,21 @@ class EarlyStopping:
         self.val_loss_min = val_loss
 
 
+def verify_lora_setup(model):
+    """Verify LoRA parameters are properly set up"""
+    has_lora = False
+    for name, param in model.named_parameters():
+        if "lora_" in name:
+            has_lora = True
+            if not param.requires_grad:
+                raise ValueError(f"LoRA parameter {name} requires_grad is False")
+
+    if not has_lora:
+        raise ValueError("No LoRA parameters found in model")
+
+    logger.info("LoRA setup verified successfully")
+
+
 def validate(
     model: nn.Module,
     val_loader: torch.utils.data.DataLoader,
@@ -393,7 +431,6 @@ def train(
     optimizer: torch.optim.Optimizer,
     device: torch.device,
     writer: torch.utils.tensorboard.SummaryWriter,
-    draft: bool = False,
 ) -> float:
     """
     Train the model on the validation set.
@@ -433,7 +470,7 @@ def train(
             # Scaled gradient clipping
             scaler.unscale_(optimizer)
             torch.nn.utils.clip_grad_norm_(
-                model.parameters(),
+                [p for p in model.parameters() if p.requires_grad],
                 max_norm=1.0,
             )
 
@@ -454,6 +491,15 @@ def train(
                     loss.item(),
                     epoch * len(train_loader) + batch_idx,
                 )
+
+                # Log gradients
+                for name, param in model.named_parameters():
+                    if "lora_" in name and param.requires_grad:
+                        writer.add_histogram(
+                            f"gradients/{name}",
+                            param.grad,
+                            epoch * len(train_loader) + batch_idx,
+                        )
 
     train_loss /= len(train_loader)
 
@@ -492,8 +538,8 @@ def train_step(
     inputs, targets = batch  # Shape: (batch_size, 3, H, W), (batch_size, H, W)
 
     # Move the inputs and targets to the device and cast to float16
-    inputs = inputs.to(device, dtype=torch.float16)
-    targets = targets.to(device, dtype=torch.float16)
+    inputs = inputs.to(device, dtype=torch.float32)
+    targets = targets.to(device, dtype=torch.float32)
 
     outputs = model(inputs).predicted_depth  # Shape: (batch_size, H, W)
 
@@ -508,15 +554,16 @@ def train_step(
             size=targets.shape[-2:],  # Match the target size
             mode="bilinear",
             align_corners=True,
-        )
-        .squeeze(1)
-        .to(dtype=torch.float16)
+        ).squeeze(1)
+        # .to(dtype=torch.float16)
     )  # Shape: (batch_size, H, W)
 
-    assert outputs.shape == targets.shape, "Training: Output and target shape mismatch", f'Output shape: {outputs.shape}', f'Target shape: {targets.shape}'
+    assert (
+        outputs.shape == targets.shape
+    ), f"Training: Output and target shape mismatch. Output shape: {outputs.shape}, Target shape: {targets.shape}"
 
     mask = (targets <= max_depth) & (
-        targets >= 0.001 # Avoid division by zero
+        targets >= 0.001  # Avoid division by zero
     )  # Mask for valid depth values
 
     # Compute the MSE loss
@@ -530,15 +577,34 @@ def train_step(
         outputs[mask],
         targets[mask],
     )
+    
+    # Add L1 regularization for LoRA weights
+    l1_lambda = 1e-5
+    l1_reg = 0
+    for name, param in model.named_parameters():
+        if 'lora_' in name:
+            l1_reg += torch.norm(param, p=1)
+    
+    loss = loss + l1_lambda * l1_reg
 
-    # Force backward pass through LoRA layers
-    lora_params = [p for n, p in model.named_parameters() if "lora_" in n]
-    grad_tensors = [torch.ones_like(p) for p in lora_params]
-    torch.autograd.backward(
-        lora_params,
-        grad_tensors,
-        retain_graph=True,
-    )
+    # Log gradient norms for debugging
+    if loss.requires_grad:
+        grad_norms = {}
+        for name, param in model.named_parameters():
+            if "lora_" in name and param.requires_grad:
+                grad_norms[name] = param.grad.norm().item() if param.grad is not None else 0
+        
+        if any(norm == 0 for norm in grad_norms.values()):
+            logger.warning(f"Zero gradients detected in LoRA parameters: {grad_norms}")
+
+    # # Force backward pass through LoRA layers
+    # lora_params = [p for n, p in model.named_parameters() if "lora_" in n]
+    # grad_tensors = [torch.ones_like(p) for p in lora_params]
+    # torch.autograd.backward(
+    #     lora_params,
+    #     grad_tensors,
+    #     retain_graph=True,
+    # )
 
     return (
         loss,

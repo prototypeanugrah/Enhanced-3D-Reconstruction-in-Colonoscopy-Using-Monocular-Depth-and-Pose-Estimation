@@ -5,11 +5,14 @@ import logging
 import os
 
 from torch.utils.tensorboard import SummaryWriter
+from transformers import TrainingArguments, EarlyStoppingCallback
 import torch
 
-from utils import utils
-from training import training_utils
 from data_processing import dataloader
+
+# from eval import evaluation
+from training import training_utils
+from utils import utils
 
 # Set float32 matrix multiplication precision to 'high' for better performance
 # on Tensor Cores
@@ -122,6 +125,44 @@ def main(
 
     custom_model_name = f"pretrained_l{lr}_e{epochs}_b{batch_size}_m{model_size}_lora{lora_r}_w{warmup_steps if warmup_steps else 0}"
 
+    # HuggingFace Trainer
+    # # Define training arguments
+    # training_args = TrainingArguments(
+    #     output_dir=os.path.join(output_path, custom_model_name),
+    #     num_train_epochs=epochs,
+    #     per_device_train_batch_size=batch_size,
+    #     # max_steps=epochs * len(train_dataloader),
+    #     per_device_eval_batch_size=batch_size,
+    #     learning_rate=lr,
+    #     warmup_steps=warmup_steps,
+    #     weight_decay=0.01,
+    #     logging_dir=os.path.join(logdir, custom_model_name),
+    #     logging_strategy="steps",
+    #     logging_steps=100,
+    #     eval_strategy="steps",
+    #     save_strategy="steps",
+    #     load_best_model_at_end=True,
+    #     metric_for_best_model="eval_loss",
+    #     greater_is_better=False,
+    #     fp16=True,  # Enable mixed precision training
+    #     gradient_checkpointing=False,  # Disable gradient checkpointing
+    #     report_to=["tensorboard"],
+    # )
+
+    # # Initialize trainer
+    # trainer = training_utils.DepthTrainer(
+    #     model=model,
+    #     args=training_args,
+    #     train_dataloader=train_dataloader,
+    #     eval_dataloader=val_dataloader,
+    #     # compute_metrics=evaluation.compute_errors,
+    #     callbacks=[EarlyStoppingCallback(early_stopping_patience=5)],
+    # )
+
+    # # Train the model
+    # trainer.train()
+
+    # Traditional Implementation
     # Set up TensorBoard writer
     writer = SummaryWriter(
         log_dir=os.path.join(
@@ -153,6 +194,9 @@ def main(
         verbose=True,
         path=os.path.join(output_path, f"{custom_model_name}_checkpoint.pt"),
     )
+
+    # Verify LoRA setup
+    training_utils.verify_lora_setup(model)
 
     for epoch in range(epochs):
         train_loss = training_utils.train(
