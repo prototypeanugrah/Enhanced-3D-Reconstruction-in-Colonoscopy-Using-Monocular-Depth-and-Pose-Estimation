@@ -10,3 +10,6 @@ lightning
 torch
 torchvision
 transformers>=4.45.2
+wandb
+hydra-core
+omegaconf
