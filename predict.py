@@ -9,10 +9,12 @@ import cv2
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
+import torch.nn.functional as F
 
-from data_processing import dataloader
 
 # from training import training_utils
+from data_processing import dataloader
+from Depth_Anything_V2.depth_anything_v2.dpt import DepthAnythingV2
 from utils import utils
 
 
@@ -67,45 +69,91 @@ def visualize_results(
 
 
 @torch.no_grad()
-def predict(
-    test_dataloader,
-    model,
-    device,
-):
+def test(
+    model: DepthAnythingV2,
+    dataloader: torch.utils.data.DataLoader,,
+) -> tuple:
+    """
+    Function to test the model on the validation set.
 
+    Args:
+        model (DepthAnythingV2): Model to test.
+        criterion (nn.MSELoss): Loss function.
+        dataloader (torch.utils.data.DataLoader): DataLoader for the validation set.
+        epoch (int): Current epoch.
+        writer (SummaryWriter): TensorBoard writer.
+        accelerator (Accelerator): Accelerator object.
+        max_depth (float): Maximum depth value.
+
+    Returns:
+        tuple: Tuple containing the loss and evaluation results.
+    """
+
+    # Validation
     model.eval()
+    results = {"d1": 0, "abs_rel": 0, "rmse": 0}
+    for batch_idx, sample in enumerate(dataloader):
 
-    for i, data in tqdm(
-        enumerate(test_dataloader),
-        desc="Predicting",
-        unit="batch",
-        total=len(test_dataloader),
-    ):
-        # Move input to device and get prediction
-        pixel_values = data.to(device)
-        outputs = model(pixel_values)
-        predicted_depth = outputs.predicted_depth
+        img, depth = sample
 
-        # Process the prediction
-        predicted_map = predicted_depth.cpu().numpy()
-        predicted_map = np.squeeze(predicted_map)  # Remove batch dimension
+        pred = model(img)
+        # evaluate on the original resolution
+        pred = F.interpolate(
+            pred[:, None],
+            depth.shape[-2:],
+            mode="bilinear",
+            align_corners=True,
+        )
+        pred = pred.squeeze(1)
 
-        # Save raw depth predictions as numpy array
-        os.makedirs(f"./Predictions/numpy", exist_ok=True)
-        np.save(
-            f"./Predictions/numpy/{i:04d}.npy",
-            predicted_map,
+        assert (
+            pred.shape == depth.shape
+        ), f"Shape mismatch. Target: {depth.shape}, Output: {pred.shape}"
+
+        valid_mask = (depth <= max_depth) & (depth >= 0.001)
+
+        loss = criterion(
+            pred[valid_mask],
+            depth[valid_mask],
+        )
+        val_loss += loss.detach()
+
+        # Update progress bar with current loss
+        pbar.set_postfix({"loss": f"{loss.item():.4f}"})
+
+        cur_results = evaluation.compute_errors(
+            pred[valid_mask],
+            depth[valid_mask],
         )
 
-        # Save visualization as PNG
-        os.makedirs(f"./Predictions/png", exist_ok=True)
-        predicted_map_viz = (predicted_map * 255 * 256).astype(
-            "uint16"
-        )  # Scale for visualization
-        cv2.imwrite(
-            f"./Predictions/png/{i:04d}.png",
-            predicted_map_viz,
+        if batch_idx % 50 == 0:
+            writer.add_scalar(
+                "Val/Loss",
+                loss.item(),
+                epoch * len(dataloader) + batch_idx,
+            )
+
+        for k in results.keys():
+            results[k] += cur_results[k]
+
+    val_loss /= len(dataloader)
+    val_loss = accelerator.reduce(val_loss, reduction="mean").item()
+
+    for k in results.keys():
+        results[k] = results[k] / len(dataloader)
+        results[k] = round(
+            accelerator.reduce(
+                results[k],
+                reduction="mean",
+            ).item(),
+            3,
         )
+        writer.add_scalar(f"Val/{k}", results[k], epoch)
+
+    return (
+        val_loss,
+        results,
+    )
 
 
 def main(
@@ -135,8 +183,8 @@ def main(
     test_dataloader = dataloader.get_dataloaders_test(test_rgb)
     # Load model
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = AutoModelForDepthEstimation.from_pretrained(checkpoint_path)
-    model = model.to(device)
+    model = DepthAnythingV2(**{**model_configs[model_encoder]}).to(device)
+    model.load_state_dict(torch.load(checkpoint_path))
 
     predict(
         test_dataloader=test_dataloader,

@@ -1,0 +1,8 @@
+defaults:
+  - _self_
+  - dataset: simcol
+  - model: small
+  - trainer: default
+
+logger: "wandb"
+test: True

@@ -1,0 +1,5 @@
+encoder: vitl
+min_depth: 0.000001
+simcol_max_depth: 20.0
+c3vd_max_depth: 100.0
+lr: 5e-6

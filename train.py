@@ -58,7 +58,7 @@ def main(
     batch_size: int,
     lr: float,
     model_size: str,
-    lora_r: int,
+    # lora_r: int,
     epochs: int,
     use_scheduler: bool = True,
     warmup_steps: int = 500,
@@ -119,11 +119,11 @@ def main(
     # Set up model
     model = training_utils.DepthEstimationModule(
         model_name=f"depth-anything/Depth-Anything-V2-{model_size}-hf",
-        lora_r=lora_r,
+        # lora_r=lora_r,
         device=device,
     )
 
-    custom_model_name = f"pretrained_l{lr}_e{epochs}_b{batch_size}_m{model_size}_lora{lora_r}_w{warmup_steps if warmup_steps else 0}"
+    custom_model_name = f"pretrained_l{lr}_e{epochs}_b{batch_size}_m{model_size}_w{warmup_steps if warmup_steps else 0}"
 
     # HuggingFace Trainer
     # # Define training arguments
@@ -173,7 +173,8 @@ def main(
 
     # Set up optimizer and scheduler
     optimizer = torch.optim.AdamW(
-        [p for n, p in model.named_parameters() if "lora_" in n],
+        model.parameters(),
+        # [p for n, p in model.named_parameters() if "lora_" in n],
         lr=lr,
     )
 
@@ -196,7 +197,7 @@ def main(
     )
 
     # Verify LoRA setup
-    training_utils.verify_lora_setup(model)
+    # training_utils.verify_lora_setup(model)
 
     for epoch in range(epochs):
         train_loss = training_utils.train(
@@ -240,7 +241,7 @@ def main(
                 scheduler.step()
 
         current_lr = optimizer.param_groups[0]["lr"]
-        logger.info(f"Current Learning Rate: {current_lr:.6f}")
+        logger.info("Current Learning Rate: {%.6f}", current_lr)
         writer.add_scalar("Train/LearningRate", current_lr, epoch)
 
         # Early stopping
@@ -300,13 +301,13 @@ if __name__ == "__main__":
         choices=["Small", "Base", "Large"],
         help="Size of the DepthAnythingV2 model to use",
     )
-    parser.add_argument(
-        "-lora_r",
-        "--lora_rank",
-        type=int,
-        default=4,
-        help="Rank of LoRA",
-    )
+    # parser.add_argument(
+    #     "-lora_r",
+    #     "--lora_rank",
+    #     type=int,
+    #     default=4,
+    #     help="Rank of LoRA",
+    # )
     parser.add_argument(
         "-l",
         "--learning_rate",
@@ -339,7 +340,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     # Convert use_scheduler to boolean
-    scheduler = str2bool(args.scheduler)
+    use_scheduler = str2bool(args.scheduler)
 
     os.makedirs(args.output_dir, exist_ok=True)  # Ensure the output directory exists
     os.makedirs(args.logdir, exist_ok=True)  # Ensure the logging directory exists
@@ -350,9 +351,9 @@ if __name__ == "__main__":
         args.batch_size,
         args.learning_rate,
         args.model_size,
-        args.lora_rank,
+        # args.lora_rank,
         args.epochs,
-        scheduler,
+        use_scheduler,
         args.warmup_steps,
         args.logdir,
     )

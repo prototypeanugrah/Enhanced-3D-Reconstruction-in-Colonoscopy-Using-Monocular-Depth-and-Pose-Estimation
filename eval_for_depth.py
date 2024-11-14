@@ -1,8 +1,9 @@
 import os
+import sys
+
+from PIL import Image
 import numpy as np
 import glob
-from PIL import Image
-import sys
 
 INPUT_PATH = "./datasets/"
 
@@ -12,12 +13,12 @@ warning2 = False
 
 def check_depth(pred):
     global warning1, warning2
-    # assert pred.shape == (
-    #     475,
-    #     475,
-    # ), "Wrong size of predicted depth, expected [475,475], got {}".format(
-    #     list(pred.shape)
-    # )
+    assert pred.shape == (
+        475,
+        475,
+    ), "Wrong size of predicted depth, expected [475,475], got {}".format(
+        list(pred.shape)
+    )
     assert pred.dtype == np.float16, "Wrong data type, expected float16, got {}".format(
         pred.dtype
     )
@@ -52,24 +53,24 @@ def load_depth(pred_file, gt_file):
 
 def eval_depth(pred, gt_depth):
     # * 20 to get centimeters
-    diff = (pred - gt_depth) * 20
+    diff = pred - gt_depth
     epsilon = 1e-6  # Small positive constant
     L1_error = np.mean(np.abs(diff))
-    abs_rel = np.mean(np.abs(diff) / (gt_depth * 20 + epsilon))
-    rel_error = (
-        np.median(
-            np.abs((diff) / (gt_depth * 20 + epsilon)),
-        )
-        * 100
-    )
+    abs_rel = np.mean(np.abs(diff) / (gt_depth + epsilon))
     RMSE_error = np.sqrt(np.mean((diff) ** 2))
-    return L1_error, abs_rel, rel_error, RMSE_error
+    # δ<1.1 (percentage of pixels within 10% of actual depth)
+    thresh = np.maximum(
+        (gt_depth / pred),
+        (pred / gt_depth),
+    )
+    d1 = np.mean(thresh < 1.1)
+    return L1_error, abs_rel, d1, RMSE_error
 
 
 def process_depths(test_folders, INPUT_PATH):
     # first check if all the data is there
     for traj in test_folders:
-        print(traj)
+        # print(traj)
         assert os.path.exists(INPUT_PATH + traj + "/depth/"), "No input folder found"
         input_file_list = np.sort(
             glob.glob(INPUT_PATH + traj + "/depth/FrameBuffer*.npy")
@@ -87,7 +88,7 @@ def process_depths(test_folders, INPUT_PATH):
         input_file_list = np.sort(
             glob.glob(INPUT_PATH + traj + "/depth/FrameBuffer*.npy")
         )
-        L1_errors, abs_rels, rel_errors, rmses = [], [], [], []
+        L1_errors, abs_rels, d1_err, rmses = [], [], [], []
         preds, gts = [], []
         for i in range(len(input_file_list)):
             file_name1 = input_file_list[i].split("/")[-1]
@@ -107,17 +108,17 @@ def process_depths(test_folders, INPUT_PATH):
         print("Scale: ", scale)
 
         for i in range(len(input_file_list)):
-            L1_error, abs_rel, rel_error, rmse = eval_depth(
+            L1_error, abs_rel, d1, rmse = eval_depth(
                 preds[i] * scale,
                 gts[i],
             )
             L1_errors.append(L1_error)
             abs_rels.append(abs_rel)
-            rel_errors.append(rel_error)
+            d1_err.append(d1)
             rmses.append(rmse)
         print("Mean L1 error in cm: ", np.mean(L1_errors))
         print("Mean AbsRel error in cm: ", np.mean(abs_rels))
-        print("Median relative error in %: ", np.mean(rel_errors))
+        print("Median d1 error in cm: ", np.mean(d1_err))
         print("Mean RMSE in cm: ", np.mean(rmses))
 
 

@@ -13,10 +13,9 @@ after a given patience.
 - validate_step: Function for a single validation step.
 """
 
-from typing import Dict, List, Union
 import logging
+import os
 
-from peft import LoraConfig, get_peft_model
 from torch import nn
 from torch import amp
 from torch.optim import lr_scheduler
@@ -25,8 +24,6 @@ from tqdm import tqdm
 from transformers import (
     AutoModelForDepthEstimation,
     AutoImageProcessor,
-    # BitsAndBytesConfig,
-    # Trainer,
 )
 import torch
 import torch.nn.functional as F
@@ -46,64 +43,32 @@ class DepthEstimationModule(nn.Module):
 
     Args:
         model_name (str): The name of the model to use for depth estimation.
-        lora_r (int, optional): The LoRA rank value to use. Defaults to 4.
         device (str, optional): The device to use for training. Defaults to "cuda".
     """
 
     def __init__(
         self,
         model_name: str,
-        lora_r: int = 4,
         device: str = "cuda",
     ):
         super().__init__()
 
-        # Quantization configuration (Q-LoRA config)
-        bnb_config = BitsAndBytesConfig(
-            load_in_4bit=True,
-            bnb_4bit_use_double_quant=True,
-            bnb_4bit_quant_type="nf4",
-            bnb_4bit_compute_dtype=torch.bfloat16,
-        )
         self.model = AutoModelForDepthEstimation.from_pretrained(
             model_name,
-            quantization_config=bnb_config,
-            torch_dtype=torch.float16,
+            torch_dtype=torch.float32,
         )
 
-        # LoRA configuration
-        lora_config = LoraConfig(
-            r=lora_r,
-            lora_alpha=32,
-            target_modules=[
-                "query",
-                "value",
-            ],
-            lora_dropout=0.1,
-            bias="none",
-            task_type="DEPTH_ESTIMATION",
-            init_lora_weights=True,
-        )
-
-        # Apply LoRA to the model
-        self.model = get_peft_model(self.model, lora_config)
         self.model.to(device)
 
         # Load the image processor
         self.processor = AutoImageProcessor.from_pretrained(model_name)
 
-        # Freeze base model parameters
-        for param in self.model.base_model.parameters():
-            param.requires_grad = False
-
-        # Unfreeze LoRA parameters
-        for name, param in self.model.named_parameters():
-            if "lora_" in name:
-                param.requires_grad = True
+        # Enable all parameters as trainable
+        for param in self.model.parameters():
+            param.requires_grad = True
 
         # Print trainable parameters
         self.print_trainable_parameters()
-        self.enable_input_require_grads()
 
     def forward(
         self,
@@ -122,13 +87,6 @@ class DepthEstimationModule(nn.Module):
         # Preprocess the input images and move to the device
         x = self.preprocess(x).to(next(self.model.parameters()).device)
         return self.model(x)
-    
-    def enable_input_require_grads(self):
-    """Enable input requires_grad for better gradient flow"""
-    def make_inputs_require_grad(module, input, output):
-        output.requires_grad_(True)
-    
-    self.model.get_input_embeddings().register_forward_hook(make_inputs_require_grad)
 
     def preprocess(
         self,
@@ -156,27 +114,15 @@ class DepthEstimationModule(nn.Module):
 
     def print_trainable_parameters(self):
         """Print detailed information about model parameters"""
-        lora_params = 0
         all_params = 0
         for name, param in self.model.named_parameters():
             num_params = param.numel()
             all_params += num_params
-            if "lora_" in name:
-                lora_params += num_params
-            # logger.info(
-            #     "LoRA parameter: %s, Shape: %s, Requires grad: %s",
-            #     name,
-            #     param.shape,
-            #     param.requires_grad,
-            # )
 
         logger.info(
-            "Total LoRA parameters: %d || Total parameters: %d || LoRA percentage: %.2f%%",
-            lora_params,
+            "Total parameters: %d",
             all_params,
-            100 * lora_params / all_params,
         )
-
 
 
 class WarmupReduceLROnPlateau:
@@ -279,7 +225,7 @@ class EarlyStopping:
         patience: int = 5,
         verbose: bool = False,
         delta: float = 1e-5,
-        path: str = "checkpoint.pt",
+        path: str = "checkpoints",
     ):
         """
         Args:
@@ -288,29 +234,30 @@ class EarlyStopping:
             verbose (bool): If True, prints a message for each validation loss
             improvement. Default: False
             delta (float): Minimum change in the monitored quantity to qualify
-            as an improvement. Default: 0
-            path (str): Path for the checkpoint to be saved to.
-            Default: 'checkpoint.pt'
+            as an improvement. Default: 1e-5
+            path (str): Directory for saving model checkpoints.
         """
         self.patience = patience
         self.verbose = verbose
         self.counter = 0
         self.best_score = None
         self.early_stop = False
-        self.val_loss_min = float("inf")
+        self.val_metric_min = float("inf")
         self.delta = delta
         self.path = path
+        self.last_saved_path = None
 
     def __call__(
         self,
-        val_loss: float,
+        val_metric: float,
         model: nn.Module,
+        epoch: int,
     ):
-        score = -val_loss
+        score = -val_metric
 
         if self.best_score is None:
             self.best_score = score
-            self.save_checkpoint(val_loss, model)
+            self.save_checkpoint(val_metric, model, epoch)
         elif score < self.best_score + self.delta:
             self.counter += 1
             logger.info(
@@ -322,44 +269,62 @@ class EarlyStopping:
                 self.early_stop = True
         else:
             self.best_score = score
-            self.save_checkpoint(val_loss, model)
+            self.save_checkpoint(val_metric, model, epoch)
             self.counter = 0
 
     def save_checkpoint(
         self,
-        val_loss: float,
+        val_metric: float,
         model: nn.Module,
+        epoch: int,
     ) -> None:
         """
-        Saves model when validation loss decrease.
+        Saves model when validation metric decrease.
 
         Args:
-            val_loss (float): Validation loss to determine if the model has improved.
+            val_metric (float): Validation metric to determine if the model has improved.
             model (nn.Module): Model to save.
+            epoch (int): Current epoch number
         """
         if self.verbose:
             logger.info(
-                "Validation loss decreased (%.6f --> %.6f). Saving model ...",
-                self.val_loss_min,
-                val_loss,
+                "Validation metric decreased (%.6f --> %.6f). Saving model ...",
+                self.val_metric_min,
+                val_metric,
             )
-        torch.save(model.state_dict(), self.path)
-        self.val_loss_min = val_loss
 
+        # Delete previous best model if it exists
+        if self.last_saved_path and os.path.exists(self.last_saved_path):
+            try:
+                os.remove(self.last_saved_path)
+                logger.info(
+                    "Deleted previous model: %s",
+                    self.last_saved_path,
+                )
+            except Exception as e:
+                logger.error(
+                    "Failed to delete previous model: %s",
+                    str(e),
+                )
 
-def verify_lora_setup(model):
-    """Verify LoRA parameters are properly set up"""
-    has_lora = False
-    for name, param in model.named_parameters():
-        if "lora_" in name:
-            has_lora = True
-            if not param.requires_grad:
-                raise ValueError(f"LoRA parameter {name} requires_grad is False")
+        # Save new model with epoch number in filename
+        new_path = os.path.join(
+            self.path,
+            f"best_model_epoch_{epoch+1}.pth",
+        )
 
-    if not has_lora:
-        raise ValueError("No LoRA parameters found in model")
-
-    logger.info("LoRA setup verified successfully")
+        try:
+            torch.save(
+                model.state_dict(),
+                new_path,
+                _use_new_zipfile_serialization=True,
+            )
+            logger.info('Saved model to "%s"', new_path)
+            self.last_saved_path = new_path
+            self.val_metric_min = val_metric
+        except Exception as e:
+            logger.error("Failed to save model: %s", str(e))
+            logger.error("Attempted to save to: %s", new_path)
 
 
 def validate(
@@ -492,14 +457,16 @@ def train(
                     epoch * len(train_loader) + batch_idx,
                 )
 
-                # Log gradients
-                for name, param in model.named_parameters():
-                    if "lora_" in name and param.requires_grad:
-                        writer.add_histogram(
-                            f"gradients/{name}",
-                            param.grad,
-                            epoch * len(train_loader) + batch_idx,
-                        )
+                # # Log gradients
+                # for name, param in model.named_parameters():
+                #     if (
+                #         param.grad is not None and torch.numel(param.grad) > 0
+                #     ):  # Check if gradients exist and are non-empty
+                #         writer.add_histogram(
+                #             f"gradients/{name}",
+                #             param.grad.detach(),  # Detach the gradient tensor
+                #             epoch * len(train_loader) + batch_idx,
+                #         )
 
     train_loss /= len(train_loader)
 
@@ -566,6 +533,19 @@ def train_step(
         targets >= 0.001  # Avoid division by zero
     )  # Mask for valid depth values
 
+    # logger.info(
+    #     f"Outputs range: {outputs[mask].min().item():.3f} to {outputs[mask].max().item():.3f}"
+    # )
+    # logger.info(
+    #     f"Targets range: {targets[mask].min().item():.3f} to {targets[mask].max().item():.3f}"
+    # )
+
+    # Before computing loss
+    if torch.isnan(outputs).any() or torch.isinf(outputs).any():
+        logger.error("NaN or Inf in outputs")
+    if torch.isnan(targets).any() or torch.isinf(targets).any():
+        logger.error("NaN or Inf in targets")
+
     # Compute the MSE loss
     loss = nn.MSELoss()(
         outputs[mask],
@@ -577,34 +557,42 @@ def train_step(
         outputs[mask],
         targets[mask],
     )
-    
-    # Add L1 regularization for LoRA weights
-    l1_lambda = 1e-5
-    l1_reg = 0
-    for name, param in model.named_parameters():
-        if 'lora_' in name:
-            l1_reg += torch.norm(param, p=1)
-    
-    loss = loss + l1_lambda * l1_reg
 
     # Log gradient norms for debugging
+    # Debug gradients
+    if not loss.requires_grad:
+        logger.warning("Loss doesn't require gradients!")
+
+    # Verify loss value
+    if torch.isnan(loss) or torch.isinf(loss):
+        logger.warning(f"Invalid loss value: {loss.item()}")
+    elif loss.item() == 0:
+        logger.warning("Loss is zero!")
+    else:
+        logger.info(f"Loss value: {loss.item()}")
+
     if loss.requires_grad:
         grad_norms = {}
-        for name, param in model.named_parameters():
-            if "lora_" in name and param.requires_grad:
-                grad_norms[name] = param.grad.norm().item() if param.grad is not None else 0
-        
-        if any(norm == 0 for norm in grad_norms.values()):
-            logger.warning(f"Zero gradients detected in LoRA parameters: {grad_norms}")
+        total_params = 0
+        zero_grads = 0
 
-    # # Force backward pass through LoRA layers
-    # lora_params = [p for n, p in model.named_parameters() if "lora_" in n]
-    # grad_tensors = [torch.ones_like(p) for p in lora_params]
-    # torch.autograd.backward(
-    #     lora_params,
-    #     grad_tensors,
-    #     retain_graph=True,
-    # )
+        for name, param in model.named_parameters():
+            total_params += 1
+            if param.grad is None:
+                zero_grads += 1
+                grad_norms[name] = 0
+            else:
+                norm = param.grad.norm().item()
+                grad_norms[name] = norm
+                if norm == 0:
+                    zero_grads += 1
+
+        if zero_grads > 0:
+            logger.warning(
+                f"Zero gradients detected in {zero_grads}/{total_params} parameters ({(zero_grads/total_params)*100:.1f}%)"
+            )
+            # Optionally log the specific parameters with zero gradients
+            # logger.debug(f"Parameters with zero gradients: {grad_norms}")
 
     return (
         loss,
@@ -636,23 +624,19 @@ def validate_step(
     inputs, targets = batch
 
     # Move the inputs and targets to the device and cast to float16
-    inputs = inputs.to(device, dtype=torch.float16)
-    targets = targets.to(device, dtype=torch.float16)
+    inputs = inputs.to(device, dtype=torch.float32)
+    targets = targets.to(device, dtype=torch.float32)
 
     with torch.no_grad():
         outputs = model(inputs).predicted_depth
 
         # Resize the output to match the target size if necessary
-        outputs = (
-            F.interpolate(
-                outputs.unsqueeze(1),
-                size=targets.shape[-2:],
-                mode="bilinear",
-                align_corners=True,
-            )
-            .squeeze(1)
-            .to(dtype=torch.float16)
-        )
+        outputs = F.interpolate(
+            outputs.unsqueeze(1),
+            size=targets.shape[-2:],
+            mode="bilinear",
+            align_corners=True,
+        ).squeeze(1)
 
         assert (
             outputs.shape == targets.shape

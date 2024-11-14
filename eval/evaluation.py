@@ -34,12 +34,12 @@ def compute_errors(
         logger.warning("Inf values detected in predictions")
 
     # * 20 to get centimeters
-    diff = (pred - gt) * 20
+    diff = pred - gt
     epsilon = 1e-6  # Small positive constant
 
-    abs_rel = torch.mean(
-        torch.abs(diff) / (gt * 20 + epsilon)
-    )  # Absolute relative error
+    L1_error = torch.mean(torch.abs(diff))
+
+    abs_rel = torch.mean(torch.abs(diff) / (gt + epsilon))  # Absolute relative error
 
     rmse = torch.sqrt(torch.mean(torch.pow(diff, 2)))  # Root mean squared error
 
@@ -48,10 +48,11 @@ def compute_errors(
         (gt / pred),
         (pred / gt),
     )
-    delta_1_1 = (thresh < 1.1).float().mean()
+    d1 = (thresh < 1.1).float().mean()
 
     return {
-        "abs_rel": abs_rel.item(),
-        "rmse": rmse.item(),
-        "delta_1_1": delta_1_1.item(),
+        "d1": d1.detach(),
+        "abs_rel": abs_rel.detach(),
+        "rmse": rmse.detach(),
+        "l1": L1_error.detach(),
     }

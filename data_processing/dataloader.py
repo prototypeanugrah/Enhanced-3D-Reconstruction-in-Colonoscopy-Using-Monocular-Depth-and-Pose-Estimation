@@ -13,6 +13,8 @@ def get_dataloaders(
     train_imgs: list,
     val_maps: list,
     val_imgs: list,
+    test_maps: list,
+    test_imgs: list,
     batch_size: int,
 ) -> tuple:
     """
@@ -32,7 +34,7 @@ def get_dataloaders(
         [
             transforms.ToTensor(),
             transforms.Resize(
-                (350, 350),
+                (475, 475),
                 antialias=True,
             ),
             transforms.Normalize(
@@ -45,7 +47,7 @@ def get_dataloaders(
     # transform_target = transforms.ToTensor()
     transform_target = transforms.Compose(
         [
-            transforms.Resize((350, 350)),
+            transforms.Resize((475, 475)),
             transforms.ToTensor(),
         ]
     )
@@ -63,6 +65,13 @@ def get_dataloaders(
     val_dataset = dataset.Dataset(
         input_paths=val_imgs,
         target_paths=val_maps,
+        transform_input=transform_input,
+        transform_target=transform_target,
+    )
+
+    test_dataset = dataset.Dataset(
+        input_paths=test_imgs,
+        target_paths=test_maps,
         transform_input=transform_input,
         transform_target=transform_target,
     )
@@ -87,9 +96,20 @@ def get_dataloaders(
         persistent_workers=True,
     )
 
+    test_dataloader = data.DataLoader(
+        dataset=test_dataset,
+        batch_size=batch_size,
+        shuffle=False,
+        drop_last=False,
+        num_workers=8,
+        pin_memory=True,
+        persistent_workers=True,
+    )
+
     return (
         train_dataloader,
         val_dataloader,
+        test_dataloader,
     )
 
 
@@ -99,7 +119,7 @@ def get_dataloaders_test(imgs):
         [
             transforms.ToTensor(),
             transforms.Resize(
-                (350, 350),
+                (475, 475),
                 antialias=True,
             ),
             transforms.Normalize(
@@ -119,7 +139,7 @@ def get_dataloaders_test(imgs):
         batch_size=1,
         shuffle=False,
         drop_last=False,
-        num_workers=8,
+        num_workers=32,
     )
 
     return dataloader

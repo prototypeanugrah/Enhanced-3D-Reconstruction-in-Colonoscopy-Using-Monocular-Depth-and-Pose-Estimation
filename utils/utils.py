@@ -172,4 +172,6 @@ def process_images(
         train_rgb,
         val_depth,
         val_rgb,
+        test_depth,
+        test_rgb,
     )

@@ -5,15 +5,13 @@ import glob
 import os
 
 from tqdm import tqdm
-from transformers import AutoModelForDepthEstimation
-import cv2
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
+import torch.nn.functional as F
 
 from data_processing import dataloader
-
-# from training import training_utils
+from Depth_Anything_V2.depth_anything_v2.dpt import DepthAnythingV2
 from utils import utils
 
 
@@ -77,20 +75,32 @@ def predict(
 
     model.eval()
 
-    for i, data in tqdm(
+    for i, sample in tqdm(
         enumerate(test_dataloader),
         desc="Predicting",
         unit="batch",
         total=len(test_dataloader),
     ):
         # Move input to device and get prediction
-        pixel_values = data.to(device)
-        outputs = model(pixel_values)
-        predicted_depth = outputs.predicted_depth
+        sample = sample.to(device)
+        pred = model(sample)
+
+        pred = F.interpolate(
+            pred[:, None],
+            (475, 475),
+            mode="bilinear",
+            align_corners=True,
+        )
+        pred = pred.squeeze(1)
 
         # Process the prediction
-        predicted_map = predicted_depth.cpu().numpy()
+        predicted_map = pred.cpu().numpy()
         predicted_map = np.squeeze(predicted_map)  # Remove batch dimension
+
+        # print(f"Pred shape: {pred.shape}")
+        # print(f"predicted_map shape: {predicted_map.shape}")
+
+        # exit()
 
         np.save(
             op_files[i],
@@ -101,7 +111,34 @@ def predict(
 def main(
     checkpoint_path: str = None,
     input_path: str = None,
+    model_size: str = None,
 ):
+
+    model_configs = {
+        "vits": {
+            "encoder": "vits",
+            "features": 64,
+            "out_channels": [48, 96, 192, 384],
+        },
+        "vitb": {
+            "encoder": "vitb",
+            "features": 128,
+            "out_channels": [96, 192, 384, 768],
+        },
+        "vitl": {
+            "encoder": "vitl",
+            "features": 256,
+            "out_channels": [256, 512, 1024, 1024],
+        },
+        "vitg": {
+            "encoder": "vitg",
+            "features": 384,
+            "out_channels": [1536, 1536, 1536, 1536],
+        },
+    }
+
+    model_encoder = f"vit{model_size}"
+
     # Load input
     test_vids = [
         os.path.join(input_path, "SyntheticColon_I/Frames_S5/*.png"),
@@ -135,8 +172,8 @@ def main(
     test_dataloader = dataloader.get_dataloaders_test(test_rgb)
     # Load model
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = AutoModelForDepthEstimation.from_pretrained(checkpoint_path)
-    model = model.to(device)
+    model = DepthAnythingV2(**{**model_configs[model_encoder]}).to(device)
+    model.load_state_dict(torch.load(checkpoint_path))
 
     predict(
         test_dataloader=test_dataloader,
@@ -161,12 +198,22 @@ if __name__ == "__main__":
         "-i",
         "--image_path",
         type=str,
-        required=True,
+        # required=True,
+        default="./datasets/",
         help="Path to the directory containing input images",
+    )
+    parser.add_argument(
+        "-m",
+        "--model_size",
+        type=str,
+        default="b",
+        choices=["s", "b", "l"],
+        help="Size of the DepthAnythingV2 model to use",
     )
     args = parser.parse_args()
 
     main(
         args.checkpoint_path,
         args.image_path,
+        args.model_size,
     )
