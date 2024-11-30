@@ -13,6 +13,7 @@ from omegaconf import DictConfig
 
 from data_processing import dataset
 import lightning_model
+import lightning_model_combined
 
 # Set float32 matrix multiplication precision to 'high' for better performance
 # on Tensor Cores
@@ -30,37 +31,57 @@ def main(
 
     pl.seed_everything(42)
 
-    # Data module
-    # data_module = dataset.SimColDataModule(**args.dataset)
-    data_module = dataset.CombinedDataModule(**args.dataset)
+    # Select appropriate datamodule based on config
+    if args.dataset.ds_type == "simcol":
+        data_module = dataset.SimColDataModule(**args.dataset)
+        model_args = dict(args.model)
+        model_args["max_depth"] = args.model.simcol_max_depth
+        # Remove unused max_depth parameters
+        del model_args["simcol_max_depth"]
+        del model_args["c3vd_max_depth"]
+    elif args.dataset.ds_type == "c3vd":
+        data_module = dataset.C3VDDataModule(**args.dataset)
+        model_args = dict(args.model)
+        model_args["max_depth"] = args.model.c3vd_max_depth
+        # Remove unused max_depth parameters
+        del model_args["simcol_max_depth"]
+        del model_args["c3vd_max_depth"]
+    elif args.dataset.ds_type == "combined":
+        data_module = dataset.CombinedDataModule(**args.dataset)
+        model_args = dict(args.model)
+    else:
+        raise ValueError(f"Unknown dataset ds_type: {args.dataset.ds_type}")
 
     # Set up model
-    model = lightning_model.DepthAnythingV2Module(**args.model)
+    if args.dataset.ds_type != "combined":
+        model = lightning_model.DepthAnythingV2Module(**model_args)
+    else:
+        model = lightning_model_combined.DepthAnythingV2Module(**model_args)
 
-    experiment_id = f"m{args.model.encoder}_l{args.model.lr}_b{args.dataset.batch_size}_e{args.trainer.max_epochs}"
+    experiment_id = f"m{args.model.encoder}_l{args.model.lr}_b{args.dataset.batch_size}_e{args.trainer.max_epochs}_d{args.dataset.ds_type}"
     logger = False
     if args.logger:
         logger = WandbLogger(
-            project="depth-any-endoscopy-combined",
+            project=f"depth-any-endoscopy-{args.dataset.ds_type}",
             name=experiment_id,
             save_dir="~/home/public/avaishna/Endoscopy-3D-Modeling/",
             offline=False,
         )
-        experiment_id = logger.experiment.id
 
     checkpoint_callback = ModelCheckpoint(
         monitor="val_loss",
-        dirpath=f"checkpoints/{experiment_id}",
-        filename="depth-any-endoscopy-{epoch:02d}-{val_loss:.2f}",
-        save_top_k=3,
+        dirpath=f"checkpoints/{args.dataset.ds_type}/{experiment_id}",
+        filename="depth-any-endoscopy-epoch{epoch:02d}-val_loss{val_loss:.2f}",
+        save_top_k=1,
         mode="min",
     )
 
     early_stopping = EarlyStopping(
         monitor="val_loss",
-        patience=5,
+        patience=10,
         mode="min",
         verbose=True,
+        min_delta=1e-4,
     )
 
     lr_monitor = LearningRateMonitor(logging_interval="step")
@@ -77,6 +98,7 @@ def main(
         # precision="32-true",
         precision="16-mixed",
         val_check_interval=0.5,
+        gradient_clip_val=0.5,
     )
 
     # Train the model
@@ -91,9 +113,18 @@ def main(
         best_model_path = checkpoint_callback.best_model_path
         if best_model_path:
             print(f"Loading best model from {best_model_path}")
-            model = lightning_model.DepthAnythingV2Module.load_from_checkpoint(
-                checkpoint_path=best_model_path
-            )
+            if args.dataset.ds_type != "combined":
+                model = lightning_model.DepthAnythingV2Module.load_from_checkpoint(
+                    checkpoint_path=best_model_path,
+                    **model_args,
+                )
+            else:
+                model = (
+                    lightning_model_combined.DepthAnythingV2Module.load_from_checkpoint(
+                        checkpoint_path=best_model_path,
+                        **model_args,
+                    )
+                )
 
         # Run test set evaluation
         test_results = trainer.test(
@@ -101,12 +132,7 @@ def main(
             datamodule=data_module,
         )
 
-        # Log test results
-        if logger:
-            metrics = {f"test_{k}": v for k, v in test_results[0].items()}
-            logger.log_metrics(metrics)
-
-        print("Test Results:", test_results)
+        print("Test Results:", test_results[0])
 
 
 if __name__ == "__main__":

@@ -2,16 +2,15 @@
 
 import os
 import glob
+import random
 
 from torch.utils import data
-
+from torchvision import transforms
+import torch
+import torchvision.transforms.functional as F
 import cv2
-
-# import matplotlib.pyplot as plt
 import numpy as np
 import lightning as pl
-import torch
-from torchvision import transforms
 
 from utils import utils
 
@@ -26,20 +25,22 @@ class SimColDataset(data.Dataset):
 
     def __init__(
         self,
-        # input_paths: list,
-        # target_paths: list,
-        # size: int = 518,
         data_dir: str,
         data_list: str,
         size: int = 518,
+        hflip: bool = False,
+        vflip: bool = False,
+        affine: bool = False,
         mode: str = None,
+        ds_type: str = None,
     ):
-        # self.input_paths = input_paths
-        # self.target_paths = target_paths
-        # self.size = size
 
         self.data_dir = data_dir
         self.size = size
+        self.hflip = hflip
+        self.vflip = vflip
+        self.affine = affine
+        self.ds_type = ds_type
 
         # Read folder paths from text file
         if mode in ("Train", "Val", "Test"):
@@ -142,11 +143,45 @@ class SimColDataset(data.Dataset):
         image = self.transform_input(image)
         depth = self.transform_target(depth)
 
+        if self.hflip:
+            if random.uniform(0.0, 1.0) > 0.5:
+                image = F.hflip(image)
+                depth = F.hflip(depth)
+
+        if self.vflip:
+            if random.uniform(0.0, 1.0) > 0.5:
+                image = F.vflip(image)
+                depth = F.vflip(depth)
+
+        if self.affine:
+            angle = random.uniform(-180.0, 180.0)
+            h_trans = random.uniform(-352 / 8, 352 / 8)
+            v_trans = random.uniform(-352 / 8, 352 / 8)
+            scale = random.uniform(0.5, 1.5)
+            shear = random.uniform(-22.5, 22.5)
+            x = F.affine(
+                x,
+                angle,
+                (h_trans, v_trans),
+                scale,
+                shear,
+                fill=-1.0,
+            )
+            y = F.affine(
+                y,
+                angle,
+                (h_trans, v_trans),
+                scale,
+                shear,
+                fill=0.0,
+            )
+
         return {
             "dataset": dataset,
             "id": idx,
             "image": image,
             "depth": depth,
+            "ds_type": self.ds_type,
         }
 
     # def plot(
@@ -198,32 +233,25 @@ class SimColDataModule(pl.LightningDataModule):
 
     def __init__(
         self,
-        # input_path: str,
-        # batch_size: int = 32,
-        # num_workers: int = 8,
-        # size: int = 518,
-        data_dir: str,
-        train_list: str,
-        val_list: str,
-        test_list: str,
+        simcol_data_dir: str,
+        simcol_train_list: str,
+        simcol_val_list: str,
+        simcol_test_list: str,
+        ds_type: str = None,
         batch_size: int = 32,
         num_workers: int = 8,
         size: int = 518,
     ):
-        # super(SimColDataModule, self).__init__()
-        # self.input_path = input_path
-        # self.batch_size = batch_size
-        # self.num_workers = num_workers
-        # self.size = size
 
         super(SimColDataModule, self).__init__()
-        self.data_dir = data_dir
-        self.train_list = train_list
-        self.val_list = val_list
-        self.test_list = test_list
+        self.simcol_data_dir = simcol_data_dir
+        self.train_list = simcol_train_list
+        self.val_list = simcol_val_list
+        self.test_list = simcol_test_list
         self.batch_size = batch_size
         self.num_workers = num_workers
         self.size = size
+        self.ds_type = ds_type
 
         # Initialize dataset attributes
         self.train_dataset = None
@@ -239,91 +267,40 @@ class SimColDataModule(pl.LightningDataModule):
         self,
         stage: str | None = None,
     ) -> None:
-        # Define validation and test videos
-        # val_vids = [
-        #     os.path.join(self.input_path, "SyntheticColon_I/Frames_S4"),
-        #     os.path.join(self.input_path, "SyntheticColon_I/Frames_S9"),
-        #     os.path.join(self.input_path, "SyntheticColon_I/Frames_S14"),
-        #     os.path.join(self.input_path, "SyntheticColon_II/Frames_B4"),
-        #     os.path.join(self.input_path, "SyntheticColon_II/Frames_B9"),
-        #     os.path.join(self.input_path, "SyntheticColon_II/Frames_B14"),
-        # ]
-
-        # test_vids = [
-        #     os.path.join(self.input_path, "SyntheticColon_I/Frames_S5"),
-        #     os.path.join(self.input_path, "SyntheticColon_I/Frames_S10"),
-        #     os.path.join(self.input_path, "SyntheticColon_I/Frames_S15"),
-        #     os.path.join(self.input_path, "SyntheticColon_II/Frames_B5"),
-        #     os.path.join(self.input_path, "SyntheticColon_II/Frames_B10"),
-        #     os.path.join(self.input_path, "SyntheticColon_II/Frames_B15"),
-        #     os.path.join(self.input_path, "SyntheticColon_III/Frames_O1"),
-        #     os.path.join(self.input_path, "SyntheticColon_III/Frames_O2"),
-        #     os.path.join(self.input_path, "SyntheticColon_III/Frames_O3"),
-        # ]
-
-        # # Get all subdirectories
-        # all_dirs = []
-        # for root, dirs, _ in os.walk(self.input_path):
-        #     for dir in dirs:
-        #         if dir.startswith("Frames_"):
-        #             all_dirs.append(os.path.join(root, dir))
-
-        # # Create train_vids
-        # train_vids = [
-        #     dir for dir in all_dirs if dir not in val_vids and dir not in test_vids
-        # ]
-
-        # # Process images
-        # train_depth, train_rgb, val_depth, val_rgb, test_depth, test_rgb = (
-        #     utils.process_images(
-        #         train_vids,
-        #         val_vids,
-        #         test_vids,
-        #         self.input_path,
-        #     )
-        # )
-
-        # Create datasets
-        # if stage == "fit" or stage is None:
-        #     self.train_dataset = SimColDataset(
-        #         input_paths=train_rgb,
-        #         target_paths=train_depth,
-        #         size=self.size,
-        #     )
-
-        #     self.val_dataset = SimColDataset(
-        #         input_paths=val_rgb,
-        #         target_paths=val_depth,
-        #         size=self.size,
-        #     )
-
-        # if stage == "test" or stage is None:
-        #     self.test_dataset = SimColDataset(
-        #         input_paths=test_rgb,
-        #         target_paths=test_depth,
-        #         size=self.size,
-        #     )
         if stage == "fit" or stage is None:
             self.train_dataset = SimColDataset(
-                data_dir=self.data_dir,
+                data_dir=self.simcol_data_dir,
                 data_list=self.train_list,
                 size=self.size,
+                hflip=True,
+                vflip=True,
+                affine=False,
                 mode="Train",
+                ds_type=self.ds_type,
             )
             self.val_dataset = SimColDataset(
-                data_dir=self.data_dir,
+                data_dir=self.simcol_data_dir,
                 data_list=self.val_list,
                 size=self.size,
                 mode="Val",
+                ds_type=self.ds_type,
             )
+
+            if self.ds_type == "simcol":
+                print(f"SimCol Train: {len(self.train_dataset)}")
+                print(f"SimCol Val:   {len(self.val_dataset)}")
 
         if stage == "test" or stage is None:
             self.test_dataset = SimColDataset(
-                data_dir=self.data_dir,
+                data_dir=self.simcol_data_dir,
                 data_list=self.test_list,
                 size=self.size,
                 mode="Test",
+                ds_type=self.ds_type,
             )
+
+            if self.ds_type == "simcol":
+                print(f"SimCol Test: {len(self.test_dataset)}")
 
     def train_dataloader(self):
         return data.DataLoader(
@@ -344,6 +321,7 @@ class SimColDataModule(pl.LightningDataModule):
             num_workers=self.num_workers,
             pin_memory=True,
             persistent_workers=True,
+            drop_last=False,
         )
 
     def test_dataloader(self):
@@ -354,6 +332,7 @@ class SimColDataModule(pl.LightningDataModule):
             num_workers=self.num_workers,
             pin_memory=True,
             persistent_workers=True,
+            drop_last=False,
         )
 
 
@@ -373,48 +352,18 @@ class C3VD_Dataset(data.Dataset):
         data_dir: str,
         data_list,
         size: int = 518,
-        mode=None,
+        hflip: bool = False,
+        vflip: bool = False,
+        affine: bool = False,
+        mode: str = None,
+        ds_type: str = None,
     ):
         self.data_dir = data_dir
         self.size = size
-
-        # if mode in ("Train", "Val"):
-        #     with open(data_list, "r") as f:
-        #         self.dirs = f.readline().strip().split(" ")
-        # elif mode == "Test":
-        #     self.dirs = data_list
-        # else:
-        #     raise ValueError(
-        #         "Mode not set or incorrect mode set! Only 'Train' or 'Test' is valid!"
-        #     )
-
-        # self.images = []
-        # self.depths = []
-
-        # for path in self.dirs:
-        #     images = sorted(
-        #         glob.glob(
-        #             os.path.join(
-        #                 self.data_dir,
-        #                 path,
-        #                 "images",
-        #                 "*.png",
-        #             )
-        #         )
-        #     )
-        #     depths = sorted(
-        #         glob.glob(
-        #             os.path.join(
-        #                 self.data_dir,
-        #                 path,
-        #                 "depths",
-        #                 "*.tiff",
-        #             )
-        #         )
-        #     )
-
-        #     self.images.extend(images)
-        #     self.depths.extend(depths)
+        self.hflip = hflip
+        self.vflip = vflip
+        self.affine = affine
+        self.ds_type = ds_type
 
         if mode in ("Train", "Val", "Test"):
             with open(data_list, "r") as f:
@@ -527,26 +476,48 @@ class C3VD_Dataset(data.Dataset):
         # Read depth and scale appropriately
         depth = (depth.astype(np.float32) / 65535.0) * 100.0
 
-        # min_depth = 0.0
-        # max_depth = 1.0
-
-        # Create a mask to enable only depth values within the range
-        # mask = ((depth >= min_depth) & (depth <= max_depth)).astype(np.float32)
-
-        # Preprocessing
-        # image = self.transform(image)
-        # depth = self.transform(depth)
-        # mask = self.transform(mask)
-
         image = self.transform_input(image)
         depth = self.transform_output(depth)
+
+        if self.hflip:
+            if random.uniform(0.0, 1.0) > 0.5:
+                image = F.hflip(image)
+                depth = F.hflip(depth)
+
+        if self.vflip:
+            if random.uniform(0.0, 1.0) > 0.5:
+                image = F.vflip(image)
+                depth = F.vflip(depth)
+
+        if self.affine:
+            angle = random.uniform(-180.0, 180.0)
+            h_trans = random.uniform(-352 / 8, 352 / 8)
+            v_trans = random.uniform(-352 / 8, 352 / 8)
+            scale = random.uniform(0.5, 1.5)
+            shear = random.uniform(-22.5, 22.5)
+            x = F.affine(
+                x,
+                angle,
+                (h_trans, v_trans),
+                scale,
+                shear,
+                fill=-1.0,
+            )
+            y = F.affine(
+                y,
+                angle,
+                (h_trans, v_trans),
+                scale,
+                shear,
+                fill=0.0,
+            )
 
         return {
             "dataset": dataset,
             "id": frame_id,
             "image": image,
             "depth": depth,
-            # "mask": mask,
+            "ds_type": self.ds_type,
         }
 
 
@@ -566,22 +537,24 @@ class C3VDDataModule(pl.LightningDataModule):
 
     def __init__(
         self,
-        data_dir: str,
-        train_list: str,
-        val_list: str,
-        test_list: str,
+        c3vd_data_dir: str,
+        c3vd_train_list: str,
+        c3vd_val_list: str,
+        c3vd_test_list: str,
+        ds_type: str,
         batch_size: int = 32,
         num_workers: int = 8,
         size: int = 518,
     ):
         super(C3VDDataModule, self).__init__()
-        self.data_dir = data_dir
-        self.train_list = train_list
-        self.val_list = val_list
-        self.test_list = test_list
+        self.data_dir = c3vd_data_dir
+        self.train_list = c3vd_train_list
+        self.val_list = c3vd_val_list
+        self.test_list = c3vd_test_list
         self.batch_size = batch_size
         self.num_workers = num_workers
         self.size = size
+        self.ds_type = ds_type
 
         # Initialize dataset attributes
         self.train_dataset = None
@@ -609,13 +582,21 @@ class C3VDDataModule(pl.LightningDataModule):
                 data_list=self.train_list,
                 mode="Train",
                 size=self.size,
+                hflip=True,
+                vflip=True,
+                affine=False,
+                ds_type=self.ds_type,
             )
             self.val_dataset = C3VD_Dataset(
                 data_dir=self.data_dir,
                 data_list=self.val_list,
                 mode="Val",
                 size=self.size,
+                ds_type=self.ds_type,
             )
+            if self.ds_type == "c3vd":
+                print(f"C3VD Train: {len(self.train_dataset)}")
+                print(f"C3VD Val:   {len(self.val_dataset)}")
 
         if stage == "test" or stage is None:
             self.test_dataset = C3VD_Dataset(
@@ -623,7 +604,11 @@ class C3VDDataModule(pl.LightningDataModule):
                 data_list=self.test_list,
                 mode="Test",
                 size=self.size,
+                ds_type=self.ds_type,
             )
+
+            if self.ds_type == "c3vd":
+                print(f"C3VD Test:  {len(self.test_dataset)}\n")
 
     def train_dataloader(self):
         return data.DataLoader(
@@ -644,6 +629,7 @@ class C3VDDataModule(pl.LightningDataModule):
             num_workers=self.num_workers,
             pin_memory=True,
             persistent_workers=True,
+            drop_last=False,
         )
 
     def test_dataloader(self):
@@ -654,6 +640,7 @@ class C3VDDataModule(pl.LightningDataModule):
             num_workers=self.num_workers,
             pin_memory=True,
             persistent_workers=True,
+            drop_last=False,
         )
 
 
@@ -676,6 +663,7 @@ class CombinedDataset(data.Dataset):
         c3vd_list: str = None,
         size: int = 518,
         mode: str = None,
+        ds_type: str = None,
     ):
         self.size = size
         self.mode = mode
@@ -685,17 +673,19 @@ class CombinedDataset(data.Dataset):
 
         if simcol_dataset is not None:
             self.datasets.append(simcol_dataset)
-            # print(f"Added SimCol dataset with {len(simcol_dataset)} samples")
 
         if c3vd_data_dir is not None and c3vd_list is not None:
             c3vd_dataset = C3VD_Dataset(
                 data_dir=c3vd_data_dir,
                 data_list=c3vd_list,
                 size=size,
+                hflip=True,
+                vflip=True,
+                affine=False,
                 mode=mode,
+                ds_type=ds_type,
             )
             self.datasets.append(c3vd_dataset)
-            # print(f"Added C3VD dataset with {len(c3vd_dataset)} samples")
 
         if not self.datasets:
             raise ValueError("No datasets were provided to CombinedDataset")
@@ -704,7 +694,10 @@ class CombinedDataset(data.Dataset):
         self.lengths = [len(dataset) for dataset in self.datasets]
         self.cumulative_lengths = np.cumsum(self.lengths)
 
-        print(f"Mode: {mode} ----- Individual dataset lengths: {self.lengths}")
+        print(f"Mode: {mode}")
+        print(f"SimCol dataset length: {self.lengths[0]}")
+        print(f"C3VD dataset length: {self.lengths[1]}")
+        print(f"Total dataset length: {sum(self.lengths)}")
 
     def __len__(self):
         return sum(self.lengths)
@@ -728,7 +721,9 @@ class CombinedDataset(data.Dataset):
 
         # Get the item from the appropriate dataset using the local index
         result = self.datasets[dataset_idx][local_idx]
-        result["source"] = torch.tensor(1.0 if dataset_idx == 0 else 0.0)
+        result["source"] = torch.tensor(
+            0.0 if dataset_idx == 0 else 1.0
+        )  # 0 for SimCol, 1 for C3VD
         return result
 
 
@@ -744,6 +739,7 @@ class CombinedDataModule(pl.LightningDataModule):
         c3vd_train_list: str,
         c3vd_val_list: str,
         c3vd_test_list: str,
+        ds_type: str,
         batch_size: int = 32,
         num_workers: int = 8,
         size: int = 518,
@@ -766,6 +762,7 @@ class CombinedDataModule(pl.LightningDataModule):
         self.batch_size = batch_size
         self.num_workers = num_workers
         self.size = size
+        self.ds_type = ds_type
 
         # Initialize dataset attributes
         self.train_dataset = None
@@ -773,48 +770,6 @@ class CombinedDataModule(pl.LightningDataModule):
         self.test_dataset = None
 
     def setup(self, stage: str | None = None) -> None:
-        # Get SimCol splits
-        # val_vids = [
-        #     os.path.join(self.simcol_path, "SyntheticColon_I/Frames_S4"),
-        #     os.path.join(self.simcol_path, "SyntheticColon_I/Frames_S9"),
-        #     os.path.join(self.simcol_path, "SyntheticColon_I/Frames_S14"),
-        #     os.path.join(self.simcol_path, "SyntheticColon_II/Frames_B4"),
-        #     os.path.join(self.simcol_path, "SyntheticColon_II/Frames_B9"),
-        #     os.path.join(self.simcol_path, "SyntheticColon_II/Frames_B14"),
-        # ]
-
-        # test_vids = [
-        #     os.path.join(self.simcol_path, "SyntheticColon_I/Frames_S5"),
-        #     os.path.join(self.simcol_path, "SyntheticColon_I/Frames_S10"),
-        #     os.path.join(self.simcol_path, "SyntheticColon_I/Frames_S15"),
-        #     os.path.join(self.simcol_path, "SyntheticColon_II/Frames_B5"),
-        #     os.path.join(self.simcol_path, "SyntheticColon_II/Frames_B10"),
-        #     os.path.join(self.simcol_path, "SyntheticColon_II/Frames_B15"),
-        #     os.path.join(self.simcol_path, "SyntheticColon_III/Frames_O1"),
-        #     os.path.join(self.simcol_path, "SyntheticColon_III/Frames_O2"),
-        #     os.path.join(self.simcol_path, "SyntheticColon_III/Frames_O3"),
-        # ]
-
-        # # Get all subdirectories
-        # all_dirs = []
-        # for root, dirs, _ in os.walk(self.simcol_path):
-        #     for dir in dirs:
-        #         if dir.startswith("Frames_"):
-        #             all_dirs.append(os.path.join(root, dir))
-
-        # train_vids = [
-        #     dir for dir in all_dirs if dir not in val_vids and dir not in test_vids
-        # ]
-
-        # # Process SimCol images
-        # train_depth, train_rgb, val_depth, val_rgb, test_depth, test_rgb = (
-        #     utils.process_images(
-        #         train_vids,
-        #         val_vids,
-        #         test_vids,
-        #         self.simcol_path,
-        #     )
-        # )
 
         if stage == "fit" or stage is None:
             self.train_dataset = CombinedDataset(
@@ -822,12 +777,17 @@ class CombinedDataModule(pl.LightningDataModule):
                     data_dir=self.simcol_data_dir,
                     data_list=self.simcol_train_list,
                     size=self.size,
+                    hflip=True,
+                    vflip=True,
+                    affine=False,
                     mode="Train",
+                    ds_type=self.ds_type,
                 ),
                 c3vd_data_dir=self.c3vd_data_dir,
                 c3vd_list=self.c3vd_train_list,
                 size=self.size,
                 mode="Train",
+                ds_type=self.ds_type,
             )
 
             self.val_dataset = CombinedDataset(
@@ -836,11 +796,13 @@ class CombinedDataModule(pl.LightningDataModule):
                     data_list=self.simcol_val_list,
                     size=self.size,
                     mode="Val",
+                    ds_type=self.ds_type,
                 ),
                 c3vd_data_dir=self.c3vd_data_dir,
                 c3vd_list=self.c3vd_val_list,
                 size=self.size,
                 mode="Val",
+                ds_type=self.ds_type,
             )
 
         if stage == "test" or stage is None:
@@ -850,11 +812,13 @@ class CombinedDataModule(pl.LightningDataModule):
                     data_list=self.simcol_test_list,
                     size=self.size,
                     mode="Test",
+                    ds_type=self.ds_type,
                 ),
                 c3vd_data_dir=self.c3vd_data_dir,
                 c3vd_list=self.c3vd_test_list,
                 size=self.size,
                 mode="Test",
+                ds_type=self.ds_type,
             )
 
     def train_dataloader(self):
@@ -876,6 +840,7 @@ class CombinedDataModule(pl.LightningDataModule):
             num_workers=self.num_workers,
             pin_memory=True,
             persistent_workers=True,
+            drop_last=False,
         )
 
     def test_dataloader(self):
@@ -886,4 +851,5 @@ class CombinedDataModule(pl.LightningDataModule):
             num_workers=self.num_workers,
             pin_memory=True,
             persistent_workers=True,
+            drop_last=False,
         )

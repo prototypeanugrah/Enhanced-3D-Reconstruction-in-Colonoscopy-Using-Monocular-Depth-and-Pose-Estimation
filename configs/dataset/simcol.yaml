@@ -1,11 +1,9 @@
+ds_type: "simcol"
+batch_size: 64
+num_workers: 8
+size: 518
+
 simcol_data_dir: './datasets/SyntheticColon/'
 simcol_train_list: './datasets/SyntheticColon/train.txt'
 simcol_val_list: './datasets/SyntheticColon/val.txt'
 simcol_test_list: './datasets/SyntheticColon/test.txt'
-c3vd_data_dir: './datasets/C3VD/'
-c3vd_train_list: './datasets/C3VD/train.txt'
-c3vd_val_list: './datasets/C3VD/val.txt'
-c3vd_test_list: './datasets/C3VD/test.txt'
-batch_size: 64
-num_workers: 8
-size: 518

@@ -4,5 +4,5 @@ defaults:
   - model: small
   - trainer: default
 
-logger: "wandb"
+logger: True # "wandb"
 test: True

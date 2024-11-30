@@ -1,0 +1,9 @@
+defaults:
+  - _self_
+  - model: large  # or whatever model config you want to use
+  - dataset: c3vd
+  - trainer: default
+  
+checkpoint_path: null  # Required parameter
+
+logger: true

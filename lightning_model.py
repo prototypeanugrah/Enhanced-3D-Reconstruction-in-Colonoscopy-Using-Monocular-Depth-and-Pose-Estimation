@@ -1,4 +1,4 @@
-"Module for Depth Estimation Model Config"
+"Module for Depth Estimation Model"
 
 from typing import Literal
 
@@ -8,8 +8,6 @@ from torch.optim import lr_scheduler
 import torch
 import torchmetrics
 import lightning as pl
-
-# import matplotlib.pyplot as plt
 
 from Depth_Anything_V2.metric_depth.depth_anything_v2 import dpt
 from eval import evaluation
@@ -139,7 +137,11 @@ class DepthAnythingV2Module(pl.LightningModule):
         )
 
         loss = self.loss(pred, depth)
-        self.log("train_loss", loss)
+        self.log(
+            "Train/train_loss",
+            loss,
+            batch_size=img.shape[0],
+        )
 
         # Compute and log evaluation metrics
         metrics = evaluation.compute_errors(
@@ -149,8 +151,9 @@ class DepthAnythingV2Module(pl.LightningModule):
         for metric_name, value in metrics.items():
             self.metric[metric_name](value)
             self.log(
-                f"train_{metric_name}",
+                f"Train/train_{metric_name}",
                 value,
+                batch_size=img.shape[0],
             )
 
         return loss
@@ -158,7 +161,7 @@ class DepthAnythingV2Module(pl.LightningModule):
     def validation_step(
         self,
         batch: dict,
-        batch_idx: int,
+        # batch_idx: int,
     ) -> torch.Tensor:
         """
         Perform a validation step.
@@ -179,7 +182,7 @@ class DepthAnythingV2Module(pl.LightningModule):
         )
 
         loss = self.loss(pred, depth)
-        self.log("val_loss", loss)
+        self.log("Val/val_loss", loss, batch_size=img.shape[0])
 
         # Compute and log evaluation metrics
         metrics = evaluation.compute_errors(
@@ -189,9 +192,10 @@ class DepthAnythingV2Module(pl.LightningModule):
         for metric_name, value in metrics.items():
             self.metric[metric_name](value)
             self.log(
-                f"val_{metric_name}",
+                f"Val/val_{metric_name}",
                 value,
                 prog_bar=True,
+                batch_size=img.shape[0],
             )
 
         # if batch_idx < 10 and self.logger is not None:
@@ -242,7 +246,7 @@ class DepthAnythingV2Module(pl.LightningModule):
 
         # Log the final computed metrics
         for metric_name, value in final_metrics.items():
-            self.log(f"test_{metric_name}", value)
+            self.log(f"Test/test_{metric_name}", value)
 
         # Reset metrics after computing
         self.metric.reset()
@@ -292,14 +296,18 @@ class DepthAnythingV2Module(pl.LightningModule):
             ],
             lr=self.hparams.lr,
         )
-        scheduler = torch.optim.lr_scheduler.OneCycleLR(
+        scheduler = lr_scheduler.OneCycleLR(
             optimizer,
             total_steps=self.trainer.estimated_stepping_batches,
-            max_lr=self.hparams.lr,
-            pct_start=0.05,
-            cycle_momentum=False,
-            div_factor=1e9,
-            final_div_factor=1e4,
+            max_lr=[
+                self.hparams.lr,
+                self.hparams.lr * 10,
+            ],  # Separate max_lr for each param group
+            pct_start=0.1,
+            # max_lr=self.hparams.lr,
+            # pct_start=0.05,
+            # cycle_momentum=False,
+            # div_factor=1e9,
         )
 
         return {
