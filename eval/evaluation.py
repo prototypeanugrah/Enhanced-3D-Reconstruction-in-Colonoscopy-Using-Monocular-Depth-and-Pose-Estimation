@@ -37,7 +37,7 @@ def compute_errors(
     diff = pred - gt
     epsilon = 1e-6  # Small positive constant
 
-    L1_error = torch.mean(torch.abs(diff))
+    l1_error = torch.mean(torch.abs(diff))
 
     abs_rel = torch.mean(torch.abs(diff) / (gt + epsilon))  # Absolute relative error
 
@@ -54,5 +54,5 @@ def compute_errors(
         "d1": d1.detach(),
         "abs_rel": abs_rel.detach(),
         "rmse": rmse.detach(),
-        "l1": L1_error.detach(),
+        "l1": l1_error.detach(),
     }
