@@ -11,7 +11,11 @@ from lightning.pytorch.callbacks import (
 )
 from omegaconf import DictConfig
 
-from data_processing import dataset
+from data_processing import (
+    simcol,
+    c3vd,
+    combined,
+)
 import lightning_model
 import lightning_model_combined
 
@@ -33,21 +37,19 @@ def main(
 
     # Select appropriate datamodule based on config
     if args.dataset.ds_type == "simcol":
-        data_module = dataset.SimColDataModule(**args.dataset)
+        data_module = simcol.SimColDataModule(**args.dataset)
         model_args = dict(args.model)
         model_args["max_depth"] = args.model.simcol_max_depth
-        # Remove unused max_depth parameters
         del model_args["simcol_max_depth"]
         del model_args["c3vd_max_depth"]
     elif args.dataset.ds_type == "c3vd":
-        data_module = dataset.C3VDDataModule(**args.dataset)
+        data_module = c3vd.C3VDDataModule(**args.dataset)
         model_args = dict(args.model)
         model_args["max_depth"] = args.model.c3vd_max_depth
-        # Remove unused max_depth parameters
         del model_args["simcol_max_depth"]
         del model_args["c3vd_max_depth"]
     elif args.dataset.ds_type == "combined":
-        data_module = dataset.CombinedDataModule(**args.dataset)
+        data_module = combined.CombinedDataModule(**args.dataset)
         model_args = dict(args.model)
     else:
         raise ValueError(f"Unknown dataset ds_type: {args.dataset.ds_type}")
@@ -58,7 +60,7 @@ def main(
     else:
         model = lightning_model_combined.DepthAnythingV2Module(**model_args)
 
-    experiment_id = f"m{args.model.encoder}_l{args.model.lr}_b{args.dataset.batch_size}_e{args.trainer.max_epochs}_d{args.dataset.ds_type}"
+    experiment_id = f"m{args.model.encoder}_l{args.model.lr}_b{args.dataset.batch_size}_e{args.trainer.max_epochs}_d{args.dataset.ds_type}_pct0.3"
     logger = False
     if args.logger:
         logger = WandbLogger(
@@ -78,7 +80,7 @@ def main(
 
     early_stopping = EarlyStopping(
         monitor="val_loss",
-        patience=10,
+        patience=20,
         mode="min",
         verbose=True,
         min_delta=1e-4,
@@ -86,7 +88,10 @@ def main(
 
     lr_monitor = LearningRateMonitor(logging_interval="step")
 
-    callback = [checkpoint_callback, early_stopping]
+    callback = [
+        checkpoint_callback,
+        # early_stopping,
+    ]
     if logger:
         callback.append(lr_monitor)
 
@@ -94,11 +99,7 @@ def main(
         **args.trainer,
         logger=logger,
         callbacks=callback,
-        log_every_n_steps=100,
         # precision="32-true",
-        precision="16-mixed",
-        val_check_interval=0.5,
-        gradient_clip_val=0.5,
     )
 
     # Train the model
@@ -109,7 +110,6 @@ def main(
 
     # Test the model
     if args.test:
-        # Load best model
         best_model_path = checkpoint_callback.best_model_path
         if best_model_path:
             print(f"Loading best model from {best_model_path}")
@@ -139,4 +139,4 @@ if __name__ == "__main__":
     main()
 
     # Example script
-    # python main_lightning.py ++dataset.batch_size=12 model=large ++trainer.devices=[1] ++model.lr=5e-2
+    # python main_lightning.py ++dataset.batch_size=12 dataset=c3vd model=large ++trainer.devices=[1] ++model.lr=5e-2

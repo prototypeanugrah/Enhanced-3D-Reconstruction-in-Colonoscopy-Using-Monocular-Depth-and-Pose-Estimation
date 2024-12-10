@@ -138,7 +138,7 @@ class DepthAnythingV2Module(pl.LightningModule):
 
         loss = self.loss(pred, depth)
         self.log(
-            "Train/train_loss",
+            "train_loss",
             loss,
             batch_size=img.shape[0],
         )
@@ -182,7 +182,11 @@ class DepthAnythingV2Module(pl.LightningModule):
         )
 
         loss = self.loss(pred, depth)
-        self.log("Val/val_loss", loss, batch_size=img.shape[0])
+        self.log(
+            "val_loss",
+            loss,
+            batch_size=img.shape[0],
+        )
 
         # Compute and log evaluation metrics
         metrics = evaluation.compute_errors(
@@ -264,7 +268,7 @@ class DepthAnythingV2Module(pl.LightningModule):
         Returns:
             torch.Tensor: The predicted depth map
         """
-        img, depth = self._preprocess_batch(batch)
+        img, _ = self._preprocess_batch(batch)
 
         pred = self.model(img)
         pred = pred[:, None].clamp(
@@ -274,7 +278,7 @@ class DepthAnythingV2Module(pl.LightningModule):
 
         return pred
 
-    def configure_optimizers(self):
+    def configure_optimizers(self) -> dict:
         optimizer = optim.AdamW(
             [
                 {
@@ -291,19 +295,19 @@ class DepthAnythingV2Module(pl.LightningModule):
                         for name, param in self.named_parameters()
                         if "pretrained" not in name
                     ],
-                    "lr": self.hparams.lr * 10,  # Decoder learning rate
+                    "lr": self.hparams.lr * 2,  # Decoder learning rate
                 },
-            ],
-            lr=self.hparams.lr,
+            ]
         )
         scheduler = lr_scheduler.OneCycleLR(
             optimizer,
             total_steps=self.trainer.estimated_stepping_batches,
-            max_lr=[
-                self.hparams.lr,
-                self.hparams.lr * 10,
-            ],  # Separate max_lr for each param group
-            pct_start=0.1,
+            max_lr=self.hparams.lr * 2,
+            # max_lr=[
+            #     self.hparams.lr,
+            #     self.hparams.lr * 2,
+            # ],
+            pct_start=0.3,
             # max_lr=self.hparams.lr,
             # pct_start=0.05,
             # cycle_momentum=False,
@@ -312,5 +316,8 @@ class DepthAnythingV2Module(pl.LightningModule):
 
         return {
             "optimizer": optimizer,
-            "lr_scheduler": {"scheduler": scheduler, "interval": "step"},
+            "lr_scheduler": {
+                "scheduler": scheduler,
+                "interval": "step",
+            },
         }

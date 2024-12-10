@@ -477,5 +477,5 @@ class DepthAnythingV2Module(pl.LightningModule):
 
         return {
             "optimizer": optimizer,
-            "lr_scheduler": {"scheduler": scheduler, "interval": "step"},
+            "lr_scheduler": {"scheduler": scheduler, "interval": "step",},
         }

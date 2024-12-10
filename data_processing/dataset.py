@@ -30,7 +30,6 @@ class SimColDataset(data.Dataset):
         size: int = 518,
         hflip: bool = False,
         vflip: bool = False,
-        affine: bool = False,
         mode: str = None,
         ds_type: str = None,
     ):
@@ -39,7 +38,6 @@ class SimColDataset(data.Dataset):
         self.size = size
         self.hflip = hflip
         self.vflip = vflip
-        self.affine = affine
         self.ds_type = ds_type
 
         # Read folder paths from text file
@@ -83,6 +81,12 @@ class SimColDataset(data.Dataset):
                     # interpolation=cv2.INTER_CUBIC,
                     antialias=True,
                 ),
+                transforms.ColorJitter(
+                    brightness=0.4,  # Random brightness adjustment factor
+                    contrast=0.4,  # Random contrast adjustment factor
+                    saturation=0.2,  # Random saturation adjustment factor
+                    hue=0.1,  # Random hue adjustment factor
+                ),
                 transforms.Normalize(
                     mean=[0.485, 0.456, 0.406],
                     std=[0.229, 0.224, 0.225],
@@ -98,10 +102,10 @@ class SimColDataset(data.Dataset):
                     # interpolation=cv2.INTER_CUBIC,
                     antialias=True,
                 ),
-                transforms.Normalize(
-                    mean=[0.5],
-                    std=[0.5],
-                ),
+                # transforms.Normalize(
+                #     mean=[0.5],
+                #     std=[0.5],
+                # ),
             ]
         )
 
@@ -152,29 +156,6 @@ class SimColDataset(data.Dataset):
             if random.uniform(0.0, 1.0) > 0.5:
                 image = F.vflip(image)
                 depth = F.vflip(depth)
-
-        if self.affine:
-            angle = random.uniform(-180.0, 180.0)
-            h_trans = random.uniform(-352 / 8, 352 / 8)
-            v_trans = random.uniform(-352 / 8, 352 / 8)
-            scale = random.uniform(0.5, 1.5)
-            shear = random.uniform(-22.5, 22.5)
-            x = F.affine(
-                x,
-                angle,
-                (h_trans, v_trans),
-                scale,
-                shear,
-                fill=-1.0,
-            )
-            y = F.affine(
-                y,
-                angle,
-                (h_trans, v_trans),
-                scale,
-                shear,
-                fill=0.0,
-            )
 
         return {
             "dataset": dataset,
@@ -274,7 +255,6 @@ class SimColDataModule(pl.LightningDataModule):
                 size=self.size,
                 hflip=True,
                 vflip=True,
-                affine=False,
                 mode="Train",
                 ds_type=self.ds_type,
             )
@@ -354,7 +334,6 @@ class C3VD_Dataset(data.Dataset):
         size: int = 518,
         hflip: bool = False,
         vflip: bool = False,
-        affine: bool = False,
         mode: str = None,
         ds_type: str = None,
     ):
@@ -362,7 +341,6 @@ class C3VD_Dataset(data.Dataset):
         self.size = size
         self.hflip = hflip
         self.vflip = vflip
-        self.affine = affine
         self.ds_type = ds_type
 
         if mode in ("Train", "Val", "Test"):
@@ -449,10 +427,10 @@ class C3VD_Dataset(data.Dataset):
                     (self.size, self.size),
                     antialias=True,
                 ),
-                transforms.Normalize(
-                    mean=[0.5],
-                    std=[0.5],
-                ),  # Single channel normalization
+                # transforms.Normalize(
+                #     mean=[0.5],
+                #     std=[0.5],
+                # ),  # Single channel normalization
             ]
         )
 
@@ -488,29 +466,6 @@ class C3VD_Dataset(data.Dataset):
             if random.uniform(0.0, 1.0) > 0.5:
                 image = F.vflip(image)
                 depth = F.vflip(depth)
-
-        if self.affine:
-            angle = random.uniform(-180.0, 180.0)
-            h_trans = random.uniform(-352 / 8, 352 / 8)
-            v_trans = random.uniform(-352 / 8, 352 / 8)
-            scale = random.uniform(0.5, 1.5)
-            shear = random.uniform(-22.5, 22.5)
-            x = F.affine(
-                x,
-                angle,
-                (h_trans, v_trans),
-                scale,
-                shear,
-                fill=-1.0,
-            )
-            y = F.affine(
-                y,
-                angle,
-                (h_trans, v_trans),
-                scale,
-                shear,
-                fill=0.0,
-            )
 
         return {
             "dataset": dataset,
@@ -584,7 +539,6 @@ class C3VDDataModule(pl.LightningDataModule):
                 size=self.size,
                 hflip=True,
                 vflip=True,
-                affine=False,
                 ds_type=self.ds_type,
             )
             self.val_dataset = C3VD_Dataset(
@@ -681,7 +635,6 @@ class CombinedDataset(data.Dataset):
                 size=size,
                 hflip=True,
                 vflip=True,
-                affine=False,
                 mode=mode,
                 ds_type=ds_type,
             )
@@ -779,7 +732,6 @@ class CombinedDataModule(pl.LightningDataModule):
                     size=self.size,
                     hflip=True,
                     vflip=True,
-                    affine=False,
                     mode="Train",
                     ds_type=self.ds_type,
                 ),
