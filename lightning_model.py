@@ -34,6 +34,7 @@ class DepthAnythingV2Module(pl.LightningModule):
         min_depth: float = 1e-4,
         max_depth: float = 20.0,
         lr: float = 5e-6,
+        pct_start: float = 0.1,
         **kwargs,
     ):
         """
@@ -307,7 +308,7 @@ class DepthAnythingV2Module(pl.LightningModule):
             #     self.hparams.lr,
             #     self.hparams.lr * 2,
             # ],
-            pct_start=0.3,
+            pct_start=self.hparams.pct_start,
             # max_lr=self.hparams.lr,
             # pct_start=0.05,
             # cycle_momentum=False,

@@ -60,7 +60,7 @@ def main(
     else:
         model = lightning_model_combined.DepthAnythingV2Module(**model_args)
 
-    experiment_id = f"m{args.model.encoder}_l{args.model.lr}_b{args.dataset.batch_size}_e{args.trainer.max_epochs}_d{args.dataset.ds_type}_pct0.3"
+    experiment_id = f"m{args.model.encoder}_l{args.model.lr}_b{args.dataset.batch_size}_e{args.trainer.max_epochs}_d{args.dataset.ds_type}_p{args.model.pct_start}"
     logger = False
     if args.logger:
         logger = WandbLogger(
