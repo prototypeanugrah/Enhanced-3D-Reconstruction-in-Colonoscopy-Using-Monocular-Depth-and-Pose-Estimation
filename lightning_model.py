@@ -296,14 +296,14 @@ class DepthAnythingV2Module(pl.LightningModule):
                         for name, param in self.named_parameters()
                         if "pretrained" not in name
                     ],
-                    "lr": self.hparams.lr * 2,  # Decoder learning rate
+                    "lr": self.hparams.lr * 10,  # Decoder learning rate
                 },
             ]
         )
         scheduler = lr_scheduler.OneCycleLR(
             optimizer,
             total_steps=self.trainer.estimated_stepping_batches,
-            max_lr=self.hparams.lr * 2,
+            max_lr=self.hparams.lr * 10,
             # max_lr=[
             #     self.hparams.lr,
             #     self.hparams.lr * 2,

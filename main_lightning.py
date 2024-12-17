@@ -73,7 +73,7 @@ def main(
     checkpoint_callback = ModelCheckpoint(
         monitor="val_loss",
         dirpath=f"checkpoints/{args.dataset.ds_type}/{experiment_id}",
-        filename="depth-any-endoscopy-epoch{epoch:02d}-val_loss{val_loss:.2f}",
+        filename="depth_any_endoscopy_epoch{epoch:02d}_val_loss{val_loss:.2f}",
         save_top_k=1,
         mode="min",
     )
@@ -108,31 +108,31 @@ def main(
         datamodule=data_module,
     )
 
-    # Test the model
-    if args.test:
-        best_model_path = checkpoint_callback.best_model_path
-        if best_model_path:
-            print(f"Loading best model from {best_model_path}")
-            if args.dataset.ds_type != "combined":
-                model = lightning_model.DepthAnythingV2Module.load_from_checkpoint(
-                    checkpoint_path=best_model_path,
-                    **model_args,
-                )
-            else:
-                model = (
-                    lightning_model_combined.DepthAnythingV2Module.load_from_checkpoint(
-                        checkpoint_path=best_model_path,
-                        **model_args,
-                    )
-                )
+    # # Test the model
+    # if args.test:
+    #     best_model_path = checkpoint_callback.best_model_path
+    #     if best_model_path:
+    #         print(f"Loading best model from {best_model_path}")
+    #         if args.dataset.ds_type != "combined":
+    #             model = lightning_model.DepthAnythingV2Module.load_from_checkpoint(
+    #                 checkpoint_path=best_model_path,
+    #                 **model_args,
+    #             )
+    #         else:
+    #             model = (
+    #                 lightning_model_combined.DepthAnythingV2Module.load_from_checkpoint(
+    #                     checkpoint_path=best_model_path,
+    #                     **model_args,
+    #                 )
+    #             )
 
-        # Run test set evaluation
-        test_results = trainer.test(
-            model=model,
-            datamodule=data_module,
-        )
+    #     # Run test set evaluation
+    #     test_results = trainer.test(
+    #         model=model,
+    #         datamodule=data_module,
+    #     )
 
-        print("Test Results:", test_results[0])
+    #     print("Test Results:", test_results[0])
 
 
 if __name__ == "__main__":
