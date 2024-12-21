@@ -1,25 +1,22 @@
-import traceback
-import numpy as np
-import cv2
-import vtk
-from vtkmodules.vtkCommonCore import vtkPoints
-from vtkmodules.vtkCommonDataModel import vtkPolyData
-
-# from vtkmodules.vtkRenderingCore import vtkActor, vtkPolyDataMapper
-# from vtkmodules.vtkRenderingAnnotation import vtkAxesActor
-
-# from vtkmodules.vtkRenderingCore import vtkActor, vtkPolyDataMapper
 import argparse
+import os
+
+from scipy.spatial.transform import Rotation
+import cv2
+import numpy as np
+import open3d as o3d
 
 
 def load_camera_intrinsics(
     cam_file: str,
+    dataset_type: str = "c3vd",
 ) -> dict:
     """
-    Load camera intrinsics from C3VD format
+    Load camera intrinsics from C3VD or SimCol3D format
 
     Args:
         cam_file: Path to camera intrinsics file
+        dataset_type: Type of dataset ("c3vd" or "simcol3d")
 
     Returns:
         dict: Dictionary containing camera intrinsics
@@ -27,38 +24,80 @@ def load_camera_intrinsics(
     with open(cam_file, "r") as f:
         params = list(map(float, f.read().strip().split()))
 
-    return {
-        "width": int(params[0]),  # 1350
-        "height": int(params[1]),  # 1080
-        "cx": params[2],  # 679.544839263292
-        "cy": params[3],  # 543.975887548343
-        "a0": params[4],  # focal length
-        # Skip distortion parameters for now
-        "e": params[8],  # e
-        "f": params[9],  # f
-        "g": params[10],  # g
-    }
+    if dataset_type.lower() == "c3vd":
+        return {
+            "width": int(params[0]),
+            "height": int(params[1]),
+            "cx": params[2],
+            "cy": params[3],
+            "a0": params[4],
+            "e": params[8],
+            "f": params[9],
+            "g": params[10],
+        }
+    else:  # simcol3d
+        return {
+            "width": 475,  # Fixed size for SimCol3D
+            "height": 475,
+            "fx": params[0],
+            "fy": params[4],
+            "cx": params[2],
+            "cy": params[5],
+        }
 
 
 def load_pose(
     pose_file: str,
     frame_idx: int,
+    dataset_type: str = "c3vd",
+    position_file: str = None,
+    quaternion_file: str = None,
 ) -> np.ndarray:
     """
-    Load camera pose for specific frame from pose.txt
+    Load camera pose for specific frame
 
     Args:
-        pose_file: Path to pose file
-        frame_idx: Index of the frame to load pose for
+        pose_file: Path to pose file (C3VD)
+        frame_idx: Index of the frame
+        dataset_type: Type of dataset ("c3vd" or "simcol3d")
+        position_file: Path to position file (SimCol3D)
+        quaternion_file: Path to quaternion file (SimCol3D)
 
     Returns:
         np.ndarray: 4x4 pose matrix
     """
-    with open(pose_file, "r") as f:
-        poses = f.readlines()
-        pose_line = poses[frame_idx].strip().split(",")
-        pose_matrix = np.array([float(x) for x in pose_line]).reshape(4, 4)
-    return pose_matrix
+    if dataset_type.lower() == "c3vd":
+        with open(pose_file, "r") as f:
+            poses = f.readlines()
+            pose_line = poses[frame_idx].strip().split(",")
+            pose_matrix = np.array([float(x) for x in pose_line]).reshape(4, 4)
+        return pose_matrix
+
+    else:  # simcol3d
+        # Load position and quaternion
+        positions = np.loadtxt(position_file)
+        quaternions = np.loadtxt(quaternion_file)
+
+        # Get position and quaternion for specific frame
+        position = positions[frame_idx]
+        quat = quaternions[frame_idx]
+
+        # Convert quaternion to rotation matrix (adjust for left-handed coordinate system)
+        quat_right_handed = [
+            quat[0],
+            -quat[1],
+            -quat[2],
+            quat[3],
+        ]  # Convert to right-handed
+
+        rot_matrix = Rotation.from_quat(quat_right_handed).as_matrix()
+
+        # Create 4x4 transformation matrix
+        pose_matrix = np.eye(4)
+        pose_matrix[:3, :3] = rot_matrix
+        pose_matrix[:3, 3] = position
+
+        return pose_matrix
 
 
 def create_point_cloud(
@@ -66,33 +105,53 @@ def create_point_cloud(
     depth_map,
     intrinsics: dict,
     pose: np.ndarray,
-    min_depth: float = 0.001,  # 1mm
-    max_depth: float = 0.1,  # 100mm
-) -> vtkPolyData:
+    min_depth: float = 0.001,
+    max_depth: float = 0.1,
+    dataset_type: str = "c3vd",
+) -> o3d.geometry.PointCloud:
     """
-    Generate colored point cloud from RGB and depth images using VTK
+    Generate colored point cloud from RGB and depth images using Open3D
 
     Args:
         rgb_img: RGB image
         depth_map: Depth image
         intrinsics: Camera intrinsics
         pose: Camera pose
-        min_depth: Minimum depth value to consider
-        max_depth: Maximum depth value to consider
+        min_depth: Minimum depth value
+        max_depth: Maximum depth value
+        dataset_type: Type of dataset ("c3vd" or "simcol3d")
 
     Returns:
-        vtkPolyData: Point cloud as VTK polydata
+        o3d.geometry.PointCloud: Colored point cloud
     """
+    if len(rgb_img.shape) == 3:
+        height, width, _ = rgb_img.shape
+    else:
+        height, width = rgb_img.shape
 
-    height, width = depth_map.shape
+    # Resize depth map to match RGB dimensions
+    if rgb_img.shape[:2] != depth_map.shape[:2]:
+        # tqdm.write(f"Resizing depth from {depth_map.shape} to {(height, width)}")
+        depth_map = cv2.resize(
+            depth_map,
+            (width, height),
+            interpolation=cv2.INTER_LINEAR,
+        )
 
-    # Create grid of pixel coordinates
     x, y = np.meshgrid(np.arange(width), np.arange(height))
 
-    # Get parameters
-    cx = intrinsics["cx"]
-    cy = intrinsics["cy"]
-    focal_length = intrinsics["a0"]  # Using a0 as focal length
+    if dataset_type.lower() == "c3vd":
+        cx = intrinsics["cx"]
+        cy = intrinsics["cy"]
+        focal_length = intrinsics["a0"]
+        min_depth = 0.001  # 1mm
+        max_depth = 0.1  # 100mm
+    else:  # simcol3d
+        cx = intrinsics["cx"]
+        cy = intrinsics["cy"]
+        focal_length = intrinsics["fx"]  # Using fx as focal length
+        min_depth = 0.0  # 1mm
+        max_depth = 20.0  # 20cm
 
     # Convert image coordinates to 3D points
     z = depth_map
@@ -106,290 +165,26 @@ def create_point_cloud(
     points = points[mask]
     colors = rgb_img[mask]
 
+    if dataset_type == "simcol3d":
+        # Convert points to meters before applying transformation
+        points = points / 100.0  # Convert from cm to meters
+
     # Transform points to world coordinates
     points_homogeneous = np.concatenate(
-        [points, np.ones((points.shape[0], 1))],
+        [
+            points,
+            np.ones((points.shape[0], 1)),
+        ],
         axis=1,
     )
     points_world = (pose @ points_homogeneous.T).T[:, :3]
 
-    # Create VTK points and polydata
-    vtk_points = vtkPoints()
-    vtk_colors = vtk.vtkUnsignedCharArray()
-    vtk_colors.SetNumberOfComponents(3)
-    vtk_colors.SetName("Colors")
+    # Create Open3D point cloud
+    pcd = o3d.geometry.PointCloud()
+    pcd.points = o3d.utility.Vector3dVector(points_world)
+    pcd.colors = o3d.utility.Vector3dVector(colors / 255.0)
 
-    # Add points and colors
-    for i in range(len(points_world)):
-        vtk_points.InsertNextPoint(points_world[i])
-        vtk_colors.InsertNextTuple3(colors[i][0], colors[i][1], colors[i][2])
-
-    # Create the polydata and add points
-    polydata = vtkPolyData()
-    polydata.SetPoints(vtk_points)
-    polydata.GetPointData().SetScalars(vtk_colors)
-
-    return polydata
-
-
-def save_point_cloud_visualization(
-    polydata: vtkPolyData,
-    output_image_path: str,
-    width: int = 1024,
-    height: int = 768,
-) -> None:
-    """
-    Save point cloud visualization to an image file
-
-    Args:
-        polydata: VTK PolyData object
-        output_image_path: Path to save the visualization image
-        width: Image width
-        height: Image height
-
-    Returns:
-        None
-    """
-
-    try:
-        # Create a mapper
-        mapper = vtk.vtkPolyDataMapper()
-        mapper.SetInputData(polydata)
-
-        # Create an actor
-        actor = vtk.vtkActor()
-        actor.SetMapper(mapper)
-        actor.GetProperty().SetPointSize(5)
-        actor.GetProperty().SetRenderPointsAsSpheres(True)
-
-        # Create a renderer
-        renderer = vtk.vtkRenderer()
-        renderer.AddActor(actor)
-        renderer.SetBackground(0.1, 0.1, 0.1)  # Dark gray background
-
-        # Add axes
-        axes = vtk.vtkAxesActor()
-        # axes.SetTotalLength(0.1, 0.1, 0.1)
-        axes.SetTotalLength(0.02, 0.02, 0.02)
-        renderer.AddActor(axes)
-
-        # Create render window
-        render_window = vtk.vtkRenderWindow()
-        render_window.AddRenderer(renderer)
-        render_window.SetSize(width, height)
-        render_window.SetOffScreenRendering(1)  # Enable off-screen rendering
-
-        # Reset camera and adjust view
-        renderer.ResetCamera()
-        camera = renderer.GetActiveCamera()
-
-        # Get point cloud center for better camera positioning
-        center = polydata.GetCenter()
-        bounds = polydata.GetBounds()
-        diagonal = np.sqrt(
-            (bounds[1] - bounds[0]) ** 2
-            + (bounds[3] - bounds[2]) ** 2
-            + (bounds[5] - bounds[4]) ** 2
-        )
-
-        # Render from multiple angles
-        angles = [0, 45, 90, 180]  # Different viewing angles
-        for i, angle in enumerate(angles):
-
-            # Position camera relative to point cloud center
-            distance = diagonal * 2  # Camera distance from center
-            camera.SetPosition(center[0], center[1], center[2] + distance)
-            camera.SetFocalPoint(center)
-
-            # Reset camera position for each angle
-            # camera.SetPosition(0, 0, 1)  # Set camera position
-            # camera.SetFocalPoint(0, 0, 0)  # Look at origin
-            camera.SetViewUp(0, 1, 0)  # Set up direction
-
-            # Rotate camera
-            # camera = renderer.GetActiveCamera()
-            camera.Azimuth(angle)
-            camera.Elevation(30)
-
-            # Render
-            renderer.ResetCamera()
-            camera.Zoom(1.8)
-            render_window.Render()
-
-            # Set up window to image filter
-            window_to_image = vtk.vtkWindowToImageFilter()
-            window_to_image.SetInput(render_window)
-            window_to_image.Update()
-
-            # Save to file
-            writer = vtk.vtkPNGWriter()
-            output_path = f"{output_image_path}_view{angle}.png"
-            writer.SetFileName(output_path)
-            writer.SetInputConnection(window_to_image.GetOutputPort())
-            writer.Write()
-
-    except Exception as e:
-        print(f"Error during visualization: {str(e)}")
-        traceback.print_exc()  # Print full error traceback
-
-    finally:
-        # Clean up
-        if "render_window" in locals():
-            render_window.Finalize()
-
-
-def visualize_point_cloud(polydata: vtkPolyData) -> None:
-    """
-    Visualize the point cloud using VTK
-
-    Args:
-        polydata: VTK PolyData object
-
-    Returns:
-        None
-    """
-    # Create a mapper
-    mapper = vtk.vtkPolyDataMapper()
-    mapper.SetInputData(polydata)
-
-    # Create an actor
-    actor = vtk.vtkActor()
-    actor.SetMapper(mapper)
-    actor.GetProperty().SetPointSize(2)  # Make points more visible
-
-    # Create a renderer
-    renderer = vtk.vtkRenderer()
-    renderer.AddActor(actor)
-    renderer.SetBackground(0.1, 0.1, 0.1)  # Dark gray background
-
-    # Create axes actor
-    axes = vtk.vtkAxesActor()
-    axes.SetTotalLength(0.1, 0.1, 0.1)  # Set axes length to 10cm
-    axes.SetShaftTypeToLine()
-    renderer.AddActor(axes)
-
-    # Create a render window
-    render_window = vtk.vtkRenderWindow()
-    render_window.AddRenderer(renderer)
-    render_window.SetSize(1024, 768)  # Window size
-
-    # Create an interactor
-    interactor = vtk.vtkRenderWindowInteractor()
-    interactor.SetRenderWindow(render_window)
-
-    # Set the interactor style
-    style = vtk.vtkInteractorStyleTrackballCamera()
-    interactor.SetInteractorStyle(style)
-
-    # Initialize and start
-    interactor.Initialize()
-    render_window.Render()
-
-    # Add orientation widget
-    axes_widget = vtk.vtkOrientationMarkerWidget()
-    axes_widget.SetOrientationMarker(axes)
-    axes_widget.SetInteractor(interactor)
-    axes_widget.EnabledOn()
-    axes_widget.InteractiveOn()
-
-    print("\nVisualization Controls:")
-    print("- Left mouse button: Rotate")
-    print("- Middle mouse button: Pan")
-    print("- Right mouse button: Zoom")
-    print("- 'r' key: Reset camera")
-    print("Press 'q' to close the window")
-
-    interactor.Start()
-
-
-def save_vtk_point_cloud(
-    polydata: vtkPolyData,
-    output_path: str,
-) -> None:
-    """
-    Save point cloud to file based on extension
-
-    Args:
-        polydata: VTK PolyData object
-        output_path: Path to save the point cloud
-
-    Returns:
-        None
-    """
-
-    # Add verification
-    n_points = polydata.GetNumberOfPoints()
-    print(f"Saving point cloud with {n_points} points")
-
-    if n_points == 0:
-        print("Warning: Point cloud is empty!")
-        return
-
-    # Get file extension
-    extension = output_path.lower().split(".")[-1]
-
-    if extension == "ply":
-        # PLY writer
-        writer = vtk.vtkPLYWriter()
-        writer.SetFileName(output_path)
-        writer.SetInputData(polydata)
-        writer.SetArrayName("Colors")  # Specify the color array name
-        writer.SetColorMode(1)  # Use point colors
-        writer.SetComponent(0)  # RGB color components
-        writer.SetFileTypeToBinary()  # Can use SetFileTypeToASCII() for text format
-        writer.Write()
-
-    elif extension == "vtp":
-        # VTK XML PolyData writer
-        writer = vtk.vtkXMLPolyDataWriter()
-        writer.SetFileName(output_path)
-        writer.SetInputData(polydata)
-        writer.SetCompressorTypeToZLib()  # Optional compression
-        writer.SetDataModeToBinary()  # Binary format for smaller file size
-        writer.Write()
-
-    else:
-        raise ValueError(f"Unsupported file extension: {extension}. Use .ply or .vtp")
-
-
-def analyze_point_cloud_distribution(
-    points_world: np.ndarray,
-    colors: np.ndarray,
-) -> None:
-    """
-    Analyze the distribution of points and colors in the point cloud
-
-    Args:
-        points_world: 3D points in world coordinates
-        colors: RGB colors for each point
-
-    Returns:
-        None
-    """
-    print("\nDetailed Point Cloud Analysis:")
-
-    # Point distribution
-    print("\nPoint Distribution (meters):")
-    for axis, name in enumerate(["X", "Y", "Z"]):
-        values = points_world[:, axis]
-        print(f"{name} axis:")
-        print(f"  Range: {values.min():.3f}m to {values.max():.3f}m")
-        print(f"  Mean: {values.mean():.3f}m")
-        print(f"  Std Dev: {values.std():.3f}m")
-
-    # Color distribution
-    print("\nColor Distribution:")
-    for i, color in enumerate(["Red", "Green", "Blue"]):
-        values = colors[:, i]
-        print(f"{color}:")
-        print(f"  Range: {values.min()} to {values.max()}")
-        print(f"  Mean: {values.mean():.1f}")
-        print(f"  Std Dev: {values.std():.1f}")
-
-    # Point density
-    volume = np.prod(np.ptp(points_world, axis=0))
-    density = len(points_world) / volume if volume > 0 else 0
-    print(f"\nPoint Density: {density:.1f} points/m³")
+    return pcd
 
 
 def process_sequence(
@@ -398,9 +193,10 @@ def process_sequence(
     cam_file: str,
     pose_file: str,
     output_path: str,
-    visualize: bool = False,
-    save_vis: bool = False,
-) -> vtkPolyData:
+    dataset_type: str = "c3vd",
+    position_file: str = None,
+    quaternion_file: str = None,
+) -> o3d.geometry.PointCloud:
     """
     Process a sequence of frames to generate point clouds
 
@@ -408,65 +204,76 @@ def process_sequence(
         rgb_path: Path to RGB image
         depth_path: Path to depth image
         cam_file: Path to camera intrinsics file
-        pose_file: Path to pose file
+        pose_file: Path to pose file (C3VD)
         output_path: Path to save output point cloud
+        dataset_type: Type of dataset ("c3vd" or "simcol3d")
+        position_file: Path to position file (SimCol3D)
+        quaternion_file: Path to quaternion file (SimCol3D)
         visualize: Visualize the point cloud
         save_vis: Save visualization images
-
-    Returns:
-        vtkPolyData: Point cloud as VTK polydata
     """
     # Load camera parameters
-    intrinsics = load_camera_intrinsics(cam_file)
+    intrinsics = load_camera_intrinsics(cam_file, dataset_type)
 
     # Load RGB and depth images
     rgb = cv2.imread(rgb_path)
     # print(f"RGB image shape: {rgb.shape}")
-    # print(f"RGB image range: {rgb.min()} to {rgb.max()}")
-
     rgb = cv2.cvtColor(rgb, cv2.COLOR_BGR2RGB)
 
     depth = cv2.imread(depth_path, cv2.IMREAD_ANYDEPTH)
-    # Scale depth values to the correct range (0-100mm = 0-0.1m)
-    depth = (depth / 65535.0) * 0.1  # Scale to range 0-0.1m
+    # depth = (depth / 65535.0) * 0.1  # Scale to range 0-0.1m
+
     # print(f"Depth image shape: {depth.shape}")
-    # print(f"Depth image range: {depth.min()} to {depth.max()}")
-    # print(f"Depth range in meters: {depth.min():.3f}m to {depth.max():.3f}m")
+    # print(f"Depth range before scaling: {depth.min()} to {depth.max()}")
+
+    if dataset_type.lower() == "c3vd":
+        depth = (depth / 65535.0) * 0.1  # Scale to range 0-0.1m
+    else:  # simcol3d
+        # Convert depth from [0,1] to [0,20] cm
+        depth = depth.astype(float)
+        if depth.max() <= 1.0:  # Check if values are in [0,1] range
+            depth = depth * 20.0  # Scale to [0,20] cm
+        else:
+            depth = depth / 255.0 * 20.0  # If values are in [0,255] range
+
+    # print(f"Depth range after scaling: {depth.min():.6f} to {depth.max():.6f}")
 
     # Get frame index from filename
-    frame_idx = int(rgb_path.split("/")[-1].split("_")[0])
+    if dataset_type.lower() == "c3vd":
+        frame_idx = int(rgb_path.split("/")[-1].split("_")[0])
+    else:  # simcol3d
+        # Extract number from "FrameBuffer_XXXX.png"
+        frame_idx = int(rgb_path.split("FrameBuffer_")[-1].split(".")[0])
 
     # Load pose for this frame
-    pose = load_pose(pose_file, frame_idx)
+    pose = load_pose(
+        pose_file,
+        frame_idx,
+        dataset_type,
+        position_file,
+        quaternion_file,
+    )
 
     # Create point cloud
-    polydata = create_point_cloud(rgb, depth, intrinsics, pose)
+    pcd = create_point_cloud(
+        rgb,
+        depth,
+        intrinsics,
+        pose,
+        dataset_type=dataset_type,
+    )
 
-    # # Get points and colors for analysis
-    # points = np.array(
-    #     [polydata.GetPoint(i) for i in range(polydata.GetNumberOfPoints())]
-    # )
-    # colors = np.array(
-    #     [
-    #         polydata.GetPointData().GetScalars().GetTuple3(i)
-    #         for i in range(polydata.GetNumberOfPoints())
-    #     ]
-    # )
-    # analyze_point_cloud_distribution(points, colors)
+    # Add verification
+    n_points = len(pcd.points)
+    # print(f"Saving point cloud with {n_points} points")
 
-    # Save point cloud (optional - you'll need to implement this if needed)
-    save_vtk_point_cloud(polydata, output_path)
+    if n_points == 0:
+        print("Warning: Point cloud is empty!")
+        return
 
-    # Save visualization images
-    if save_vis:
-        visualization_path = output_path.rsplit(".", 1)[0]  # Remove .ply extension
-        save_point_cloud_visualization(polydata, visualization_path)
+    o3d.io.write_point_cloud(os.path.join(output_path + ".ply"), pcd)
 
-    # Visualize if requested
-    if visualize:
-        visualize_point_cloud(polydata)
-
-    return polydata
+    return pcd
 
 
 if __name__ == "__main__":
@@ -486,18 +293,37 @@ if __name__ == "__main__":
         required=True,
     )
     parser.add_argument(
+        "-t",
+        "--dataset_type",
+        help="Dataset type (c3vd or simcol3d)",
+        choices=["c3vd", "simcol3d"],
+        required=True,
+    )
+    parser.add_argument(
         "-c",
         "--cam_file",
         help="Path to camera.txt file",
-        required=False,
-        default="datasets/C3VD/calibration/cam.txt",
+        required=True,
+        # default="datasets/C3VD/calibration/cam.txt",
     )
     parser.add_argument(
         "-p",
         "--pose_file",
-        help="Path to pose.txt file",
+        help="Path to pose.txt file (C3VD only)",
         required=False,
         default="datasets/C3VD/trans_t1_a/pose.txt",
+    )
+    parser.add_argument(
+        "-sp",
+        "--position_file",
+        help="Path to SavedPosition file (SimCol3D only)",
+        required=False,
+    )
+    parser.add_argument(
+        "-q",
+        "--quaternion_file",
+        help="Path to SavedRotationQuaternion file (SimCol3D only)",
+        required=False,
     )
     parser.add_argument(
         "-o",
@@ -505,16 +331,7 @@ if __name__ == "__main__":
         help="Path to save output point cloud",
         required=True,
     )
-    # parser.add_argument(
-    #     "--vis",
-    #     help="Visualize the point cloud",
-    #     default=False,
-    # )
     args = parser.parse_args()
-
-    # # Hardcoded paths for camera and pose files
-    # cam_file = "datasets/C3VD/calibration/cam.txt"
-    # pose_file = "datasets/C3VD/trans_t1_a/pose.txt"
 
     pcd = process_sequence(
         args.rgb_path,
@@ -522,8 +339,11 @@ if __name__ == "__main__":
         args.cam_file,
         args.pose_file,
         args.output_path,
-        # args.vis,
-        save_vis=False,
+        args.dataset_type,
+        args.position_file,
+        args.quaternion_file,
     )
 
-# Usage: python point_cloud.py -r datasets/C3VD/trans_t1_a/0000_color.png -d datasets/C3VD/trans_t1_a/0000_depth.tiff -o pc_trans_t1_a_0000.ply
+# Usage:
+# C3VD: python point_cloud.py -r datasets/C3VD/trans_t1_a/0000_color.png -d datasets/C3VD/trans_t1_a/0000_depth.tiff -o pc_open_trans_t1_a_0000.ply -t c3vd -c datasets/C3VD/calibration/cam.txt
+# SimCol3d: python point_cloud.py -r datasets/SyntheticColon/SyntheticColon_I/Frames_S1/FrameBuffer_0000.png -d datasets/SyntheticColon/SyntheticColon_I/Frames_S1_OP/depth/FrameBuffer_0000.png -c datasets/SyntheticColon/SyntheticColon_I/cam.txt -sp datasets/SyntheticColon/SyntheticColon_I/SavedPosition_S1.txt -t simcol3d -q datasets/SyntheticColon/SyntheticColon_I/SavedRotationQuaternion_S1.txt -o pc_open_simcol_s1_0000.ply

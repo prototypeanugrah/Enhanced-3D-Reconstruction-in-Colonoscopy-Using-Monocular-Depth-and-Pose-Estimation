@@ -1,7 +1,3 @@
-import os
-
-os.environ["CUDA_VISIBLE_DEVICES"] = "1"
-
 from pathlib import Path
 from tqdm import tqdm
 
@@ -14,6 +10,9 @@ import torch
 
 from Depth_Anything_V2.metric_depth.depth_anything_v2.dpt import DepthAnythingV2
 
+import os
+
+os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
@@ -234,3 +233,6 @@ if __name__ == "__main__":
     print(f"- Total files: {len(filenames)}")
     print(f"- Skipped existing: {skipped}")
     print(f"- Newly processed: {len(filenames) - skipped}")
+
+
+# python run.py --encoder vitl --load-from "/home/public/avaishna/Endoscopy-3D-Modeling/checkpoints/simcol/mvitl_l5e-06_b20_e30_dsimcol/depth-any-endoscopy-epoch=28-val_loss=0.01.ckpt" --max-depth 20 --img_path datasets/SyntheticColon/
