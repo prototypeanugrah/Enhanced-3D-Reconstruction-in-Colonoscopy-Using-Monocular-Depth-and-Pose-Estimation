@@ -1,18 +1,20 @@
-from pathlib import Path
-from tqdm import tqdm
+"""
+Model to generate depth maps using the DepthAnythingV2 model
+"""
 
 import argparse
-import cv2
+import os
 import glob
+
+from pathlib import Path
+from tqdm import tqdm
+import cv2
 import matplotlib
 import numpy as np
 import torch
 
 from Depth_Anything_V2.metric_depth.depth_anything_v2.dpt import DepthAnythingV2
 
-import os
-
-os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
@@ -111,7 +113,6 @@ if __name__ == "__main__":
 
         state_dict = new_state_dict
 
-    # depth_anything.load_state_dict(torch.load(args.load_from, map_location="cpu"))
     depth_anything.load_state_dict(state_dict)
     depth_anything = depth_anything.to(DEVICE).eval()
 
@@ -126,10 +127,6 @@ if __name__ == "__main__":
             if args.outdir is None:
                 args.outdir = str(Path(args.img_path).parent)
     else:
-        # filenames = glob.glob(
-        #     os.path.join(args.img_path, "**/*"),
-        #     recursive=True,
-        # )
         # SimCol dataset processing
         base_dir = Path(args.img_path)
         for suffix in ["I", "II", "III"]:
@@ -170,7 +167,7 @@ if __name__ == "__main__":
             parent_folder = rel_path.parent
             frames_dir = parent_folder.name  # e.g., "Frames_O1"
             output_folder = (
-                Path(args.img_path) / parent_folder.parent / f"{frames_dir}_OP/depth"
+                Path(args.img_path) / parent_folder.parent / f"{frames_dir}_P"
             )
             base_name = Path(filename).stem
 
@@ -188,14 +185,6 @@ if __name__ == "__main__":
 
         output_folder.mkdir(parents=True, exist_ok=True)
 
-        # if args.save_numpy:
-        #     output_path = os.path.join(
-        #         args.outdir,
-        #         os.path.splitext(os.path.basename(filename))[0]
-        #         + "_raw_depth_meter.npy",
-        #     )
-        #     np.save(output_path, depth)
-
         # Save raw depth in meters
         if args.save_numpy:
             # output_path = output_folder / f"{base_name}.npy"
@@ -208,12 +197,6 @@ if __name__ == "__main__":
             depth = np.repeat(depth[..., np.newaxis], 3, axis=-1)
         else:
             depth = (cmap(depth)[:, :, :3] * 255)[:, :, ::-1].astype(np.uint8)
-
-        # output_path = os.path.join(
-        #     args.outdir, os.path.splitext(os.path.basename(filename))[0] + ".png"
-        # )
-
-        # output_path = output_folder / f"{base_name}.png"
 
         if args.pred_only:
             cv2.imwrite(str(png_path), depth)

@@ -1,8 +1,8 @@
-from pathlib import Path
 import argparse
 import glob
 import os
 
+from pathlib import Path
 from tqdm import tqdm
 
 from point_cloud import process_sequence
@@ -45,6 +45,25 @@ def main(
             depth_path = colon_dir / f"{frames_dir}_OP" / "depth" / rgb_path.name
             output_dir = colon_dir / f"{frames_dir}_PC"
             output_path = output_dir / f"pc_{frame_num}"
+
+            # Check if point cloud file already exists
+            if (output_path.with_suffix(".ply")).exists():
+                pbar.set_postfix(
+                    {
+                        "Status": "Exists",
+                        "Dir": frames_dir,
+                        "Frame": rgb_path.name,
+                    }
+                )
+                continue
+
+            pbar.set_postfix(
+                {
+                    "Status": "Processing",
+                    "Dir": frames_dir,
+                    "Frame": rgb_path.name,
+                }
+            )
 
             # Get camera and pose files
             cam_file = colon_dir / "cam.txt"
