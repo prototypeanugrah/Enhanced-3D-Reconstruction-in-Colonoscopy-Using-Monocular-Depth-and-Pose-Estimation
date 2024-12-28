@@ -167,7 +167,7 @@ if __name__ == "__main__":
             parent_folder = rel_path.parent
             frames_dir = parent_folder.name  # e.g., "Frames_O1"
             output_folder = (
-                Path(args.img_path) / parent_folder.parent / f"{frames_dir}_P"
+                Path(args.img_path) / parent_folder.parent / f"{frames_dir}_OP"
             )
             base_name = Path(filename).stem
 
@@ -190,29 +190,29 @@ if __name__ == "__main__":
             # output_path = output_folder / f"{base_name}.npy"
             np.save(str(npy_path), depth)
 
-        depth = (depth - depth.min()) / (depth.max() - depth.min()) * 255.0
-        depth = depth.astype(np.uint8)
+        # depth = (depth - depth.min()) / (depth.max() - depth.min()) * 255.0
+        # depth = depth.astype(np.uint8)
 
-        if args.grayscale:
-            depth = np.repeat(depth[..., np.newaxis], 3, axis=-1)
-        else:
-            depth = (cmap(depth)[:, :, :3] * 255)[:, :, ::-1].astype(np.uint8)
+        # if args.grayscale:
+        #     depth = np.repeat(depth[..., np.newaxis], 3, axis=-1)
+        # else:
+        #     depth = (cmap(depth)[:, :, :3] * 255)[:, :, ::-1].astype(np.uint8)
 
-        if args.pred_only:
-            cv2.imwrite(str(png_path), depth)
-        else:
-            split_region = (
-                np.ones(
-                    (raw_image.shape[0], 50, 3),
-                    dtype=np.uint8,
-                )
-                * 255
-            )
-            combined_result = cv2.hconcat([raw_image, split_region, depth])
+        # if args.pred_only:
+        #     cv2.imwrite(str(png_path), depth)
+        # else:
+        #     split_region = (
+        #         np.ones(
+        #             (raw_image.shape[0], 50, 3),
+        #             dtype=np.uint8,
+        #         )
+        #         * 255
+        #     )
+        #     combined_result = cv2.hconcat([raw_image, split_region, depth])
 
-            cv2.imwrite(str(png_path), combined_result)
+        #     cv2.imwrite(str(png_path), combined_result)
 
-    print(f"\nProcessing complete:")
+    print("\nProcessing complete:")
     print(f"- Total files: {len(filenames)}")
     print(f"- Skipped existing: {skipped}")
     print(f"- Newly processed: {len(filenames) - skipped}")

@@ -1,8 +1,10 @@
 import argparse
 import os
+import traceback
 
 from scipy.spatial.transform import Rotation
 import cv2
+import matplotlib.pyplot as plt
 import numpy as np
 import open3d as o3d
 
@@ -105,86 +107,123 @@ def create_point_cloud(
     depth_map,
     intrinsics: dict,
     pose: np.ndarray,
-    min_depth: float = 0.001,
+    min_depth: float = 0.0,
     max_depth: float = 0.1,
     dataset_type: str = "c3vd",
 ) -> o3d.geometry.PointCloud:
-    """
-    Generate colored point cloud from RGB and depth images using Open3D
+    """Generate colored point cloud from RGB and depth images using Open3D"""
 
-    Args:
-        rgb_img: RGB image
-        depth_map: Depth image
-        intrinsics: Camera intrinsics
-        pose: Camera pose
-        min_depth: Minimum depth value
-        max_depth: Maximum depth value
-        dataset_type: Type of dataset ("c3vd" or "simcol3d")
+    # print(f"Depth map range: {depth_map.min():.6f} to {depth_map.max():.6f}")
+    try:
 
-    Returns:
-        o3d.geometry.PointCloud: Colored point cloud
-    """
-    if len(rgb_img.shape) == 3:
-        height, width, _ = rgb_img.shape
-    else:
-        height, width = rgb_img.shape
+        # print("Depth map stats before filtering:")
+        # print(f"- Valid depth pixels: {np.count_nonzero(depth_map > 0)}")
+        # print(f"- Range: {depth_map.min():.6f} to {depth_map.max():.6f}")
 
-    # Resize depth map to match RGB dimensions
-    if rgb_img.shape[:2] != depth_map.shape[:2]:
-        # tqdm.write(f"Resizing depth from {depth_map.shape} to {(height, width)}")
-        depth_map = cv2.resize(
-            depth_map,
-            (width, height),
-            interpolation=cv2.INTER_LINEAR,
+        # Get dimensions
+        if len(rgb_img.shape) == 3:
+            height, width, _ = rgb_img.shape
+        else:
+            height, width = rgb_img.shape
+
+        # Resize depth map if needed
+        if rgb_img.shape[:2] != depth_map.shape[:2]:
+            depth_map = cv2.resize(
+                depth_map,
+                (width, height),
+                interpolation=cv2.INTER_LINEAR,
+            )
+
+        x, y = np.meshgrid(np.arange(width), np.arange(height))
+
+        # Get camera parameters based on dataset type
+        if dataset_type.lower() == "c3vd":
+            cx = intrinsics["cx"]
+            cy = intrinsics["cy"]
+            focal_length = intrinsics["a0"]
+            min_depth = 0.001
+            max_depth = 0.1
+        else:  # simcol3d
+            cx = intrinsics["cx"]
+            cy = intrinsics["cy"]
+            focal_length = intrinsics["fx"]
+            # min_depth = 0.001  # 0.1 cm in meters
+            max_depth = 0.2  # 20 cm in meters
+
+        # Convert image coordinates to 3D points
+        z = depth_map
+        x = (x - cx) * z / focal_length
+        y = (y - cy) * z / focal_length
+
+        points = np.stack([x, y, z], axis=-1)
+
+        # # Analyze point distribution
+        # print("\nPoint Distribution Analysis:")
+        # print(f"X range: {x.min():.3f} to {x.max():.3f}")
+        # print(f"Y range: {y.min():.3f} to {y.max():.3f}")
+        # print(f"Z range: {z.min():.3f} to {z.max():.3f}")
+
+        # # Check point density in different regions
+        # x_bins = np.linspace(x.min(), x.max(), 10)
+        # y_bins = np.linspace(y.min(), y.max(), 10)
+        # z_bins = np.linspace(z.min(), z.max(), 10)
+
+        # print("\nPoints per region:")
+        # for i in range(len(x_bins) - 1):
+        #     mask = (x >= x_bins[i]) & (x < x_bins[i + 1])
+        #     print(f"X region {i}: {np.sum(mask)} points")
+        # for i in range(len(y_bins) - 1):
+        #     mask = (x >= y_bins[i]) & (x < y_bins[i + 1])
+        #     print(f"Y region {i}: {np.sum(mask)} points")
+        # for i in range(len(z_bins) - 1):
+        #     mask = (x >= z_bins[i]) & (x < z_bins[i + 1])
+        #     print(f"Z region {i}: {np.sum(mask)} points")
+
+        # Filter out invalid depths
+        mask = (z > min_depth) & (z < max_depth)
+        # print(f"Points after depth filtering: {np.sum(mask)} / {mask.size}")
+        points = points[mask]
+        colors = rgb_img[mask]
+
+        # print(points)
+        # print(colors)
+
+        if dataset_type == "simcol3d":
+            points = points / 100.0  # Convert from cm to meters
+
+        # Transform points to world coordinates
+        points_homogeneous = np.concatenate(
+            [points, np.ones((points.shape[0], 1))],
+            axis=1,
         )
+        points_world = (pose @ points_homogeneous.T).T[:, :3]
+        # print(f"Points after transformation: {len(points_world)}")
 
-    x, y = np.meshgrid(np.arange(width), np.arange(height))
+        # print(points_world)
 
-    if dataset_type.lower() == "c3vd":
-        cx = intrinsics["cx"]
-        cy = intrinsics["cy"]
-        focal_length = intrinsics["a0"]
-        min_depth = 0.001  # 1mm
-        max_depth = 0.1  # 100mm
-    else:  # simcol3d
-        cx = intrinsics["cx"]
-        cy = intrinsics["cy"]
-        focal_length = intrinsics["fx"]  # Using fx as focal length
-        min_depth = 0.0  # 1mm
-        max_depth = 20.0  # 20cm
+        # Remove any invalid points
+        valid_mask = ~(
+            np.isnan(points_world).any(axis=1) | np.isinf(points_world).any(axis=1)
+        )
+        points_world = points_world[valid_mask]
+        # print(f"Points after invalid removal: {len(points_world)}")
+        colors = colors[valid_mask]
 
-    # Convert image coordinates to 3D points
-    z = depth_map
-    x = (x - cx) * z / focal_length
-    y = (y - cy) * z / focal_length
+        # Create Open3D point cloud in steps
+        pcd = o3d.geometry.PointCloud()
 
-    points = np.stack([x, y, z], axis=-1)
+        points_world = points_world.astype(np.float64)  # Ensure double precision
+        pcd.points = o3d.utility.Vector3dVector(points_world)
+        # print(f"Points in final point cloud: {len(pcd.points)}")
+        colors = (colors / 255.0).astype(np.float64)  # Normalize and convert to double
+        pcd.colors = o3d.utility.Vector3dVector(colors)
 
-    # Filter out invalid depths
-    mask = (z > min_depth) & (z < max_depth)
-    points = points[mask]
-    colors = rgb_img[mask]
+        return pcd
 
-    if dataset_type == "simcol3d":
-        # Convert points to meters before applying transformation
-        points = points / 100.0  # Convert from cm to meters
-
-    # Transform points to world coordinates
-    points_homogeneous = np.concatenate(
-        [
-            points,
-            np.ones((points.shape[0], 1)),
-        ],
-        axis=1,
-    )
-    points_world = (pose @ points_homogeneous.T).T[:, :3]
-
-    # Create Open3D point cloud
-    pcd = o3d.geometry.PointCloud()
-    pcd.points = o3d.utility.Vector3dVector(points_world)
-    pcd.colors = o3d.utility.Vector3dVector(colors / 255.0)
-
-    return pcd
+    except Exception as e:
+        print("\nError in create_point_cloud:")
+        traceback.print_exc()
+        raise
 
 
 def process_sequence(
@@ -217,26 +256,25 @@ def process_sequence(
 
     # Load RGB and depth images
     rgb = cv2.imread(rgb_path)
-    # print(f"RGB image shape: {rgb.shape}")
     rgb = cv2.cvtColor(rgb, cv2.COLOR_BGR2RGB)
-
     depth = cv2.imread(depth_path, cv2.IMREAD_ANYDEPTH)
-    # depth = (depth / 65535.0) * 0.1  # Scale to range 0-0.1m
 
-    # print(f"Depth image shape: {depth.shape}")
-    # print(f"Depth range before scaling: {depth.min()} to {depth.max()}")
+    # print(f"Original depth type: {depth.dtype}, range: {depth.min()}-{depth.max()}")
+
+    # Convert to float and handle scaling based on dataset type
+    depth = depth.astype(np.float32)
 
     if dataset_type.lower() == "c3vd":
+        # C3VD depth processing
         depth = (depth / 65535.0) * 0.1  # Scale to range 0-0.1m
     else:  # simcol3d
-        # Convert depth from [0,1] to [0,20] cm
-        depth = depth.astype(float)
-        if depth.max() <= 1.0:  # Check if values are in [0,1] range
-            depth = depth * 20.0  # Scale to [0,20] cm
-        else:
-            depth = depth / 255.0 * 20.0  # If values are in [0,255] range
+        # For uint16 depth maps, first normalize to [0,1]
+        depth = (depth - depth.min()) / (depth.max() - depth.min())
+        # Then convert to [0,20] cm and to meters
+        depth = depth * 20.0 / 100.0  # Convert to meters (20cm max)
 
-    # print(f"Depth range after scaling: {depth.min():.6f} to {depth.max():.6f}")
+    # print(f"Converted depth range (meters): {depth.min():.6f} to {depth.max():.6f}")
+    # visualize(depth)
 
     # Get frame index from filename
     if dataset_type.lower() == "c3vd":
@@ -274,6 +312,35 @@ def process_sequence(
     o3d.io.write_point_cloud(os.path.join(output_path + ".ply"), pcd)
 
     return pcd
+
+
+def visualize(depth):
+    # Create depth visualization
+    plt.figure(figsize=(12, 5))
+
+    # Original depth map
+    plt.subplot(121)
+    plt.imshow(depth, cmap="jet")
+    plt.colorbar(label="Depth")
+    plt.title("Original Depth Map")
+
+    # Depth histogram
+    plt.subplot(122)
+    plt.hist(depth[depth > 0].flatten(), bins=50)
+    plt.title("Depth Distribution")
+    plt.xlabel("Depth Value")
+    plt.ylabel("Count")
+
+    plt.tight_layout()
+    plt.savefig("depth_analysis.png")
+    plt.close()
+
+    # Print depth statistics
+    print("\nDepth Map Statistics:")
+    print(f"- Shape: {depth.shape}")
+    print(f"- Valid pixels: {np.count_nonzero(depth > 0)}")
+    print(f"- Zero pixels: {np.count_nonzero(depth == 0)}")
+    print(f"- Percentiles: {np.percentile(depth[depth > 0], [0, 25, 50, 75, 100])}")
 
 
 if __name__ == "__main__":
