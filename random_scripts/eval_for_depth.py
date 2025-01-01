@@ -5,7 +5,7 @@ from PIL import Image
 import numpy as np
 import glob
 
-INPUT_PATH = "./datasets/"
+INPUT_PATH = "./datasets/SyntheticColon/"
 
 warning1 = False
 warning2 = False
@@ -38,7 +38,9 @@ def load_depth(pred_file, gt_file):
     gt_depth = (
         np.array(Image.open(gt_file.replace("FrameBuffer", "Depth"))) / 255 / 256
     )  # please use this to load ground truth depth during training and testing
-    pred = np.load(pred_file)
+    pred = (
+        np.array(Image.open(pred_file).convert("L")).astype(np.float16) / 255 / 256
+    )  # np.load(pred_file)
     pred = check_depth(pred)
 
     # Resize ground truth to match prediction size
@@ -71,10 +73,8 @@ def process_depths(test_folders, INPUT_PATH):
     # first check if all the data is there
     for traj in test_folders:
         # print(traj)
-        assert os.path.exists(INPUT_PATH + traj + "/depth/"), "No input folder found"
-        input_file_list = np.sort(
-            glob.glob(INPUT_PATH + traj + "/depth/FrameBuffer*.npy")
-        )
+        assert os.path.exists(INPUT_PATH + traj + "/"), "No input folder found"
+        input_file_list = np.sort(glob.glob(INPUT_PATH + traj + "/Depth*.png"))
         if traj[18] == "I":
             assert len(input_file_list) == 601, "Predictions missing in {}".format(traj)
         else:
@@ -85,9 +85,7 @@ def process_depths(test_folders, INPUT_PATH):
     # loop through predictions
     for traj in test_folders:
         print("Processing ", traj)
-        input_file_list = np.sort(
-            glob.glob(INPUT_PATH + traj + "/depth/FrameBuffer*.npy")
-        )
+        input_file_list = np.sort(glob.glob(INPUT_PATH + traj + "/Depth*.png"))
         L1_errors, abs_rels, d1_err, rmses = [], [], [], []
         preds, gts = [], []
         for i in range(len(input_file_list)):
@@ -95,7 +93,10 @@ def process_depths(test_folders, INPUT_PATH):
             # print(file_name1)
             im1_path = input_file_list[i]
             gt_depth_path = (
-                INPUT_PATH + traj.strip("_OP") + "/" + file_name1.replace("npy", "png")
+                INPUT_PATH
+                + traj.strip("_OP")
+                + "/"
+                + file_name1  # .replace("npy", "png")
             )
             pred_depth, gt_depth = load_depth(im1_path, gt_depth_path)
             preds.append(pred_depth)
