@@ -3,7 +3,8 @@ batch_size: 64
 num_workers: 8
 size: 518
 
-simcol_data_dir: './datasets/SyntheticColon/'
-simcol_train_list: './datasets/SyntheticColon/train.txt'
-simcol_val_list: './datasets/SyntheticColon/val.txt'
-simcol_test_list: './datasets/SyntheticColon/test.txt'
+# SimCol3D: splits as per https://github.com/ESandML/SimCol-Entry/blob/main/train.py
+data_dir: './datasets/SyntheticColon/'
+train_list: './datasets/SyntheticColon/train.txt'
+val_list: './datasets/SyntheticColon/val.txt'
+test_list: './datasets/SyntheticColon/test.txt'

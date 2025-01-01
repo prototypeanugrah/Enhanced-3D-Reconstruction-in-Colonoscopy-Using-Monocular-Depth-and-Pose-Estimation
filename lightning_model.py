@@ -13,6 +13,57 @@ from Depth_Anything_V2.metric_depth.depth_anything_v2 import dpt
 from eval import evaluation
 
 
+class SiLogLoss(nn.Module):
+    def __init__(self, lambd=0.5):
+        """
+        Initialize the SiLogLoss loss function.
+
+        Args:
+            lambd (float, optional): The lambda parameter for the loss function.
+            Defaults to 0.5.
+        """
+        super().__init__()
+        self.lambd = lambd
+
+    def forward(
+        self,
+        pred: torch.Tensor,
+        target: torch.Tensor,
+        valid_mask: torch.Tensor,
+    ) -> torch.Tensor:
+        """
+        Compute the SiLogLoss loss function.
+
+        Args:
+            pred (torch.Tensor): The predicted depth map tensor.
+            target (torch.Tensor): The target depth map tensor.
+            valid_mask (torch.Tensor): The valid mask tensor.
+
+        Returns:
+            torch.Tensor: The computed loss value.
+        """
+
+        assert pred.dim() in (3, 4), f"Pred should be 3D or 4D, got shape {pred.shape}"
+        assert target.dim() == 4, f"Target should be 4D, got shape {target.shape}"
+        assert valid_mask.dim() == 4, f"Mask should be 4D, got shape {valid_mask.shape}"
+
+        # Ensure pred and target have the same shape
+        if pred.dim() == 3:  # If pred is [B, H, W]
+            pred = pred.unsqueeze(1)  # Make it [B, 1, H, W]
+
+        valid_mask = valid_mask.bool()
+        valid_mask = valid_mask.detach()
+
+        diff_log = torch.log(target[valid_mask].flatten()) - torch.log(
+            pred[valid_mask].flatten()
+        )
+        loss = torch.sqrt(
+            torch.pow(diff_log, 2).mean() - self.lambd * torch.pow(diff_log.mean(), 2)
+        )
+
+        return loss
+
+
 class DepthAnythingV2Module(pl.LightningModule):
     """
     Module for depth estimation using the DepthAnythingV2 model.
@@ -21,20 +72,30 @@ class DepthAnythingV2Module(pl.LightningModule):
         encoder (Literal["vits", "vitb", "vitl", "vitg"]): The encoder to use
         in the model.
         min_depth (float, optional): The minimum depth value to clamp the
-        output to. Defaults to 1e-4.
+        output to.
         max_depth (float, optional): The maximum depth value to clamp the
-        output to. Defaults to 20.0.
-        lr (float, optional): The learning rate to use for training. Defaults
-        to 5e-6.
+        output to.
+        pct_start (float, optional): The percentage of steps to increase the
+        learning rate. Warms up the learning rate from 0 to the initial learning
+        rate.
+        encoder_lr (float, optional): The learning rate for the encoder.
+        decoder_lr (float, optional): The learning rate for the decoder.
+        max_encoder_lr (float, optional): The maximum learning rate for the
+        encoder.
+        max_decoder_lr (float, optional): The maximum learning rate for the
+        decoder.
     """
 
     def __init__(
         self,
         encoder: Literal["vits", "vitb", "vitl", "vitg"],
-        min_depth: float = 1e-4,
-        max_depth: float = 20.0,
-        lr: float = 5e-6,
-        pct_start: float = 0.1,
+        min_depth: float,
+        max_depth: float,
+        pct_start: float,
+        encoder_lr: float,
+        decoder_lr: float,
+        max_encoder_lr: float,
+        max_decoder_lr: float,
         **kwargs,
     ):
         """
@@ -67,9 +128,8 @@ class DepthAnythingV2Module(pl.LightningModule):
 
         self.save_hyperparameters()  # Save hyperparameters for logging
 
-        dataset = "hypersim"
         pretrained_from = (
-            f"./base_checkpoints/depth_anything_v2_metric_{dataset}_{encoder}.pth"
+            f"./base_checkpoints/depth_anything_v2_metric_hypersim_{encoder}.pth"
         )
         self.model = dpt.DepthAnythingV2(
             **{
@@ -91,7 +151,8 @@ class DepthAnythingV2Module(pl.LightningModule):
             strict=False,
         )
 
-        self.loss = nn.MSELoss()
+        # self.loss = nn.MSELoss()
+        self.loss = SiLogLoss()
 
         self.metric = torchmetrics.MetricCollection(
             {
@@ -106,7 +167,23 @@ class DepthAnythingV2Module(pl.LightningModule):
         self,
         batch: dict,
     ) -> tuple:
-        img, depth = batch["image"], batch["depth"]
+        """
+        Perform preprocessing on the input batch.
+
+        Args:
+            batch (dict): A dict containing the input image and the target
+
+        Returns:
+            torch.Tensor: The preprocessed image, depth, and mask tensors
+        """
+        img, depth, mask = batch["image"], batch["depth"], batch["mask"]
+        # img, depth = batch["image"], batch["depth"]
+
+        valid_mask = (
+            (mask == 1)
+            & (depth >= self.hparams.min_depth)
+            & (depth <= self.hparams.max_depth)
+        )
 
         # Clamp depth values to min and max values
         depth = torch.clamp(
@@ -114,7 +191,7 @@ class DepthAnythingV2Module(pl.LightningModule):
             min=self.hparams.min_depth,
             max=self.hparams.max_depth,
         )
-        return img, depth
+        return img, depth, valid_mask
 
     def training_step(
         self,
@@ -129,15 +206,27 @@ class DepthAnythingV2Module(pl.LightningModule):
         Returns:
             torch.Tensor: The loss value for the training step
         """
-        img, depth = self._preprocess_batch(batch)
+        # img, depth = self._preprocess_batch(batch)
+        img, depth, valid_mask = self._preprocess_batch(batch)
 
         pred = self.model(img)
-        pred = pred[:, None].clamp(
+        pred = pred.unsqueeze(1)  # Shape: [B, 1, H, W]
+        pred = pred.clamp(
             self.hparams.min_depth,
             self.hparams.max_depth,
         )
+        # pred = pred[:, None].clamp(
+        #     self.hparams.min_depth,
+        #     self.hparams.max_depth,
+        # )
 
-        loss = self.loss(pred, depth)
+        # valid_mask = valid_mask.bool()
+
+        loss = self.loss(
+            pred,
+            depth,
+            valid_mask,
+        )
         self.log(
             "train_loss",
             loss,
@@ -146,8 +235,10 @@ class DepthAnythingV2Module(pl.LightningModule):
 
         # Compute and log evaluation metrics
         metrics = evaluation.compute_errors(
-            pred[depth > 1e-4].flatten(),
-            depth[depth > 1e-4].flatten(),
+            pred[valid_mask].flatten(),
+            depth[valid_mask].flatten(),
+            # pred[depth > 1e-4].flatten(),
+            # depth[depth > 1e-4].flatten(),
         )
         for metric_name, value in metrics.items():
             self.metric[metric_name](value)
@@ -174,15 +265,26 @@ class DepthAnythingV2Module(pl.LightningModule):
         Returns:
             torch.Tensor: The loss value for the validation step
         """
-        img, depth = self._preprocess_batch(batch)
+        # img, depth = self._preprocess_batch(batch)
+        img, depth, valid_mask = self._preprocess_batch(batch)
 
         pred = self.model(img)
-        pred = pred[:, None].clamp(
+        pred = pred.unsqueeze(1)  # Shape: [B, 1, H, W]
+        pred = pred.clamp(
             self.hparams.min_depth,
             self.hparams.max_depth,
         )
+        # pred = pred[:, None].clamp(
+        #     self.hparams.min_depth,
+        #     self.hparams.max_depth,
+        # )
 
-        loss = self.loss(pred, depth)
+        # loss = self.loss(pred, depth)
+        loss = self.loss(
+            pred,
+            depth,
+            valid_mask,
+        )
         self.log(
             "val_loss",
             loss,
@@ -191,8 +293,10 @@ class DepthAnythingV2Module(pl.LightningModule):
 
         # Compute and log evaluation metrics
         metrics = evaluation.compute_errors(
-            pred[depth > 1e-4].flatten(),
-            depth[depth > 1e-4].flatten(),
+            pred[valid_mask].flatten(),
+            depth[valid_mask].flatten(),
+            # pred[depth > 1e-4].flatten(),
+            # depth[depth > 1e-4].flatten(),
         )
         for metric_name, value in metrics.items():
             self.metric[metric_name](value)
@@ -202,15 +306,6 @@ class DepthAnythingV2Module(pl.LightningModule):
                 prog_bar=True,
                 batch_size=img.shape[0],
             )
-
-        # if batch_idx < 10 and self.logger is not None:
-        #     fig = self.trainer.datamodule.val_dataset.plot(
-        #         img[0].cpu().detach(),
-        #         depth[0].cpu().detach(),
-        #         pred[0].cpu().detach(),
-        #     )
-        #     self.logger.experiment.log({f"val_{batch_idx}": fig})
-        #     plt.close(fig)
 
         return loss
 
@@ -228,18 +323,26 @@ class DepthAnythingV2Module(pl.LightningModule):
         Args:
             batch (dict): A dict containing the input image and the target
         """
-        img, depth = self._preprocess_batch(batch)
+        # img, depth = self._preprocess_batch(batch)
+        img, depth, valid_mask = self._preprocess_batch(batch)
 
         pred = self.model(img)
-        pred = pred[:, None].clamp(
+        pred = pred.unsqueeze(1)  # Shape: [B, 1, H, W]
+        pred = pred.clamp(
             self.hparams.min_depth,
             self.hparams.max_depth,
         )
+        # pred = pred[:, None].clamp(
+        #     self.hparams.min_depth,
+        #     self.hparams.max_depth,
+        # )
 
         # Compute and log evaluation metrics
         metrics = evaluation.compute_errors(
-            pred[depth > 1e-4].flatten(),
-            depth[depth > 1e-4].flatten(),
+            pred[valid_mask].flatten(),
+            depth[valid_mask].flatten(),
+            # pred[depth > 1e-4].flatten(),
+            # depth[depth > 1e-4].flatten(),
         )
 
         for metric_name, value in metrics.items():
@@ -269,17 +372,23 @@ class DepthAnythingV2Module(pl.LightningModule):
         Returns:
             torch.Tensor: The predicted depth map
         """
-        img, _ = self._preprocess_batch(batch)
+        img, _, _ = self._preprocess_batch(batch)
 
         pred = self.model(img)
-        pred = pred[:, None].clamp(
+        pred = pred.clamp(
             self.hparams.min_depth,
             self.hparams.max_depth,
         )
+        # pred = pred[:, None].clamp(
+        #     self.hparams.min_depth,
+        #     self.hparams.max_depth,
+        # )
 
         return pred
 
     def configure_optimizers(self) -> dict:
+
+        # Define optimizer with parameter groups
         optimizer = optim.AdamW(
             [
                 {
@@ -288,7 +397,7 @@ class DepthAnythingV2Module(pl.LightningModule):
                         for name, param in self.named_parameters()
                         if "pretrained" in name
                     ],
-                    "lr": self.hparams.lr,  # Encoder learning rate
+                    "lr": self.hparams.encoder_lr,  # Encoder learning rate
                 },
                 {
                     "params": [
@@ -296,24 +405,39 @@ class DepthAnythingV2Module(pl.LightningModule):
                         for name, param in self.named_parameters()
                         if "pretrained" not in name
                     ],
-                    "lr": self.hparams.lr * 10,  # Decoder learning rate
+                    "lr": self.hparams.decoder_lr,  # Decoder learning rate
                 },
-            ]
+            ],
+            betas=(0.9, 0.999),
+            weight_decay=0.01,
         )
+
+        # Define LR scheduler for each parameter group
         scheduler = lr_scheduler.OneCycleLR(
             optimizer,
             total_steps=self.trainer.estimated_stepping_batches,
-            max_lr=self.hparams.lr * 10,
-            # max_lr=[
-            #     self.hparams.lr,
-            #     self.hparams.lr * 2,
-            # ],
+            max_lr=[
+                self.hparams.max_encoder_lr,
+                self.hparams.max_decoder_lr,
+            ],
             pct_start=self.hparams.pct_start,
-            # max_lr=self.hparams.lr,
             # pct_start=0.05,
             # cycle_momentum=False,
             # div_factor=1e9,
         )
+
+        # def poly_decay_fn(current_step: int):
+        #     total_steps = self.trainer.estimated_stepping_batches
+        #     decay = (1 - current_step / total_steps) ** 0.9
+        #     return decay
+
+        # scheduler = lr_scheduler.LambdaLR(
+        #     optimizer,
+        #     lr_lambda=[
+        #         poly_decay_fn,  # encoder
+        #         poly_decay_fn,  # decoder
+        #     ],
+        # )
 
         return {
             "optimizer": optimizer,

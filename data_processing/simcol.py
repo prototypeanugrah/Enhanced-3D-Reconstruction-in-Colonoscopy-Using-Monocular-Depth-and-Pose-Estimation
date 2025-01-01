@@ -3,6 +3,7 @@
 import os
 import random
 
+from PIL import Image
 from torch.utils import data
 from torchvision import transforms
 import torchvision.transforms.functional as F
@@ -18,19 +19,25 @@ class SimColDataset(data.Dataset):
     Dataset class for the custom dataset.
 
     Args:
-        data (list): List of input and target paths.
+        data_dir (str): Path to the data directory.
+        data_list (str): Path to the text file containing the list of folders.
+        size (int): Size of the images.
+        hflip (bool): Whether to apply horizontal flip augmentation.
+        vflip (bool): Whether to apply vertical flip augmentation.
+        mode (str): Mode of the dataset (Train, Val, Test).
+        ds_type (str): Type of the dataset (simcol, c3vd).
     """
 
     def __init__(
         self,
         data_dir: str,
         data_list: str,
-        size: int = 518,
-        hflip: bool = False,
-        vflip: bool = False,
-        mode: str = None,
-        ds_type: str = None,
-    ):
+        size: int,
+        hflip: bool,
+        vflip: bool,
+        mode: str,
+        ds_type: str,
+    ) -> None:
 
         self.data_dir = data_dir
         self.size = size
@@ -76,7 +83,7 @@ class SimColDataset(data.Dataset):
                 transforms.ToTensor(),
                 transforms.Resize(
                     (self.size, self.size),
-                    # interpolation=cv2.INTER_CUBIC,
+                    interpolation=cv2.INTER_CUBIC,
                     antialias=True,
                 ),
                 transforms.Normalize(
@@ -91,7 +98,7 @@ class SimColDataset(data.Dataset):
                 transforms.ToTensor(),
                 transforms.Resize(
                     (self.size, self.size),
-                    # interpolation=cv2.INTER_CUBIC,
+                    interpolation=cv2.INTER_CUBIC,
                     antialias=True,
                 ),
                 # transforms.Normalize(
@@ -104,7 +111,7 @@ class SimColDataset(data.Dataset):
     def __len__(self) -> int:
         return len(self.input_paths)
 
-    def _download(self):
+    def _download(self) -> None:
         raise NotImplementedError("Download not supported for this dataset")
 
     def __getitem__(
@@ -135,6 +142,18 @@ class SimColDataset(data.Dataset):
 
         # Convert from 16-bit integer [0, 65535] to centimeters [0, 20.0]
         depth = (depth / 65536.0) * 20.0
+
+        # valid_mask = torch.isnan(depth) == 0
+
+        # image = np.array(Image.open(input_id))[:, :, :3]
+        # if image.dtype == np.uint16:
+        #     image = (image / 256).astype("uint8")
+        # image = image.astype(np.float32) / 255.0  # Normalize to [0,1]
+
+        # # Load depth using PIL and convert to numpy array
+        # depth = np.array(Image.open(target_id))
+        # # Convert from 16-bit integer [0, 65535] to centimeters [0, 20.0]
+        # depth = ((depth / 65536.0) * 20.0).astype(np.float32)
 
         image = self.transform_input(image)
         depth = self.transform_target(depth)
@@ -203,24 +222,37 @@ class SimColDataset(data.Dataset):
 
 
 class SimColDataModule(pl.LightningDataModule):
+    """
+    Data module class for the SimCol dataset.
+
+    Args:
+        data_dir (str): Path to the data directory.
+        train_list (str): Path to the training list.
+        val_list (str): Path to the validation list.
+        test_list (str): Path to the test list.
+        ds_type (str): Type of the dataset (e.g. "simcol", "c3vd").
+        batch_size (int): Batch size.
+        num_workers (int): Number of workers for data loading.
+        size (int): Size of the input images.
+    """
 
     def __init__(
         self,
-        simcol_data_dir: str,
-        simcol_train_list: str,
-        simcol_val_list: str,
-        simcol_test_list: str,
-        ds_type: str = None,
-        batch_size: int = 32,
-        num_workers: int = 8,
-        size: int = 518,
+        data_dir: str,
+        train_list: str,
+        val_list: str,
+        test_list: str,
+        ds_type: str,
+        batch_size: int,
+        num_workers: int,
+        size: int,
     ):
 
         super(SimColDataModule, self).__init__()
-        self.simcol_data_dir = simcol_data_dir
-        self.train_list = simcol_train_list
-        self.val_list = simcol_val_list
-        self.test_list = simcol_test_list
+        self.data_dir = data_dir
+        self.train_list = train_list
+        self.val_list = val_list
+        self.test_list = test_list
         self.batch_size = batch_size
         self.num_workers = num_workers
         self.size = size
@@ -242,7 +274,7 @@ class SimColDataModule(pl.LightningDataModule):
     ) -> None:
         if stage == "fit" or stage is None:
             self.train_dataset = SimColDataset(
-                data_dir=self.simcol_data_dir,
+                data_dir=self.data_dir,
                 data_list=self.train_list,
                 size=self.size,
                 hflip=True,
@@ -251,7 +283,7 @@ class SimColDataModule(pl.LightningDataModule):
                 ds_type=self.ds_type,
             )
             self.val_dataset = SimColDataset(
-                data_dir=self.simcol_data_dir,
+                data_dir=self.data_dir,
                 data_list=self.val_list,
                 size=self.size,
                 mode="Val",
@@ -264,7 +296,7 @@ class SimColDataModule(pl.LightningDataModule):
 
         if stage == "test" or stage is None:
             self.test_dataset = SimColDataset(
-                data_dir=self.simcol_data_dir,
+                data_dir=self.data_dir,
                 data_list=self.test_list,
                 size=self.size,
                 mode="Test",

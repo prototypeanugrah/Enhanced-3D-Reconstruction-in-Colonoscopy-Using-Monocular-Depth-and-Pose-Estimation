@@ -3,7 +3,8 @@ batch_size: 64
 num_workers: 8
 size: 518
 
-c3vd_data_dir: './datasets/C3VD/'
-c3vd_train_list: './datasets/C3VD/train.txt'
-c3vd_val_list: './datasets/C3VD/val.txt'
-# c3vd_test_list: './datasets/C3VD/test.txt'
+# C3VD: splits as per https://github.com/yahskapar/PPSNet/tree/main/C3VD_splits
+data_dir: './datasets/C3VD/'
+train_list: './datasets/C3VD/train.txt'
+val_list: './datasets/C3VD/val.txt'
+# test_list: './datasets/C3VD/test.txt'

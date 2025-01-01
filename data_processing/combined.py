@@ -1,4 +1,4 @@
-"Module for the custom dataset"
+"Module for the custom combined dataset"
 
 from torch.utils import data
 import torch
@@ -15,40 +15,21 @@ class CombinedDataset(data.Dataset):
 
     Args:
         simcol_dataset (SimColDataset): SimCol dataset instance
-        c3vd_data_dir (str): Path to the C3VD dataset directory
-        c3vd_list (str): Path to the list of data for C3VD dataset
-        size (int): Size of the image
-        mode (str): Mode of the dataset. Can be 'Train', 'Val', or 'Test'
+        c3vd_dataset (C3VDDataset): C3VD dataset instance
     """
 
     def __init__(
         self,
-        simcol_dataset: simcol.SimColDataset = None,
-        c3vd_data_dir: str = None,
-        c3vd_list: str = None,
-        size: int = 518,
-        mode: str = None,
-        ds_type: str = None,
-    ):
-        self.size = size
-        self.mode = mode
-
+        simcol_dataset: simcol.SimColDataset,
+        c3vd_dataset: c3vd.C3VDDataset,
+    ) -> None:
         # Initialize individual datasets
         self.datasets = []
 
         if simcol_dataset is not None:
             self.datasets.append(simcol_dataset)
 
-        if c3vd_data_dir is not None and c3vd_list is not None:
-            c3vd_dataset = c3vd.C3VD_Dataset(
-                data_dir=c3vd_data_dir,
-                data_list=c3vd_list,
-                size=size,
-                hflip=True,
-                vflip=True,
-                mode=mode,
-                ds_type=ds_type,
-            )
+        if c3vd_dataset is not None:
             self.datasets.append(c3vd_dataset)
 
         if not self.datasets:
@@ -58,15 +39,18 @@ class CombinedDataset(data.Dataset):
         self.lengths = [len(dataset) for dataset in self.datasets]
         self.cumulative_lengths = np.cumsum(self.lengths)
 
-        print(f"Mode: {mode}")
+        print(f"Mode: {c3vd_dataset.mode}")
         print(f"SimCol dataset length: {self.lengths[0]}")
         print(f"C3VD dataset length: {self.lengths[1]}")
         print(f"Total dataset length: {sum(self.lengths)}")
 
-    def __len__(self):
+    def __len__(self) -> int:
         return sum(self.lengths)
 
-    def __getitem__(self, idx):
+    def __getitem__(
+        self,
+        idx: int,
+    ) -> dict:
         # Find which dataset the index belongs to
         dataset_idx = np.searchsorted(
             self.cumulative_lengths,
@@ -92,6 +76,23 @@ class CombinedDataset(data.Dataset):
 
 
 class CombinedDataModule(pl.LightningDataModule):
+    """
+    Data module class for the combined dataset.
+
+    Args:
+        simcol_data_dir (str): Path to the SimCol dataset directory
+        simcol_train_list (str): Path to the SimCol training list
+        simcol_val_list (str): Path to the SimCol validation list
+        simcol_test_list (str): Path to the SimCol test list
+        c3vd_data_dir (str): Path to the C3VD dataset directory
+        c3vd_train_list (str): Path to the C3VD training list
+        c3vd_val_list (str): Path to the C3VD validation list
+        c3vd_test_list (str): Path to the C3VD test list
+        ds_type (str): Type of dataset (e.g. "rgb", "flow")
+        batch_size (int): Batch size
+        num_workers (int): Number of workers for data loading
+        size (int): Size of the input images
+    """
 
     def __init__(
         self,
@@ -104,10 +105,10 @@ class CombinedDataModule(pl.LightningDataModule):
         c3vd_val_list: str,
         c3vd_test_list: str,
         ds_type: str,
-        batch_size: int = 32,
-        num_workers: int = 8,
-        size: int = 518,
-    ):
+        batch_size: int,
+        num_workers: int,
+        size: int,
+    ) -> None:
         super(CombinedDataModule, self).__init__()
 
         # SimCol parameters
@@ -133,7 +134,10 @@ class CombinedDataModule(pl.LightningDataModule):
         self.val_dataset = None
         self.test_dataset = None
 
-    def setup(self, stage: str | None = None) -> None:
+    def setup(
+        self,
+        stage: str,
+    ) -> None:
 
         if stage == "fit" or stage is None:
             self.train_dataset = CombinedDataset(
@@ -146,11 +150,15 @@ class CombinedDataModule(pl.LightningDataModule):
                     mode="Train",
                     ds_type=self.ds_type,
                 ),
-                c3vd_data_dir=self.c3vd_data_dir,
-                c3vd_list=self.c3vd_train_list,
-                size=self.size,
-                mode="Train",
-                ds_type=self.ds_type,
+                c3vd_dataset=c3vd.C3VDDataset(
+                    data_dir=self.c3vd_data_dir,
+                    data_list=self.c3vd_list,
+                    size=self.size,
+                    hflip=True,
+                    vflip=True,
+                    mode="Train",
+                    ds_type=self.ds_type,
+                ),
             )
 
             self.val_dataset = CombinedDataset(
@@ -161,28 +169,36 @@ class CombinedDataModule(pl.LightningDataModule):
                     mode="Val",
                     ds_type=self.ds_type,
                 ),
-                c3vd_data_dir=self.c3vd_data_dir,
-                c3vd_list=self.c3vd_val_list,
-                size=self.size,
-                mode="Val",
-                ds_type=self.ds_type,
-            )
-
-        if stage == "test" or stage is None:
-            self.test_dataset = CombinedDataset(
-                simcol_dataset=simcol.SimColDataset(
-                    data_dir=self.simcol_data_dir,
-                    data_list=self.simcol_test_list,
+                c3vd_dataset=c3vd.C3VDDataset(
+                    data_dir=self.c3vd_data_dir,
+                    data_list=self.c3vd_list,
                     size=self.size,
-                    mode="Test",
+                    hflip=True,
+                    vflip=True,
+                    mode="Val",
                     ds_type=self.ds_type,
                 ),
-                c3vd_data_dir=self.c3vd_data_dir,
-                c3vd_list=self.c3vd_test_list,
-                size=self.size,
-                mode="Test",
-                ds_type=self.ds_type,
             )
+
+        # if stage == "test" or stage is None:
+        #     self.test_dataset = CombinedDataset(
+        #         simcol_dataset=simcol.SimColDataset(
+        #             data_dir=self.simcol_data_dir,
+        #             data_list=self.simcol_test_list,
+        #             size=self.size,
+        #             mode="Test",
+        #             ds_type=self.ds_type,
+        #         )
+        #         c3vd_dataset=c3vd.C3VDDataset(
+        #             data_dir=self.c3vd_data_dir,
+        #             data_list=self.c3vd_list,
+        #             size=self.size,
+        #             hflip=True,
+        #             vflip=True,
+        #             mode="Test",
+        #             ds_type=self.ds_type,
+        #         ),
+        #     )
 
     def train_dataloader(self):
         return data.DataLoader(

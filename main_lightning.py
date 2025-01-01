@@ -31,26 +31,33 @@ torch.set_float32_matmul_precision("high")
 )
 def main(
     args: DictConfig,
-):
+) -> None:
 
     pl.seed_everything(42)
 
     # Select appropriate datamodule based on config
+    
+    # SimCol
     if args.dataset.ds_type == "simcol":
         data_module = simcol.SimColDataModule(**args.dataset)
         model_args = dict(args.model)
         model_args["max_depth"] = args.model.simcol_max_depth
         del model_args["simcol_max_depth"]
         del model_args["c3vd_max_depth"]
+    
+    # C3VD
     elif args.dataset.ds_type == "c3vd":
         data_module = c3vd.C3VDDataModule(**args.dataset)
         model_args = dict(args.model)
         model_args["max_depth"] = args.model.c3vd_max_depth
         del model_args["simcol_max_depth"]
         del model_args["c3vd_max_depth"]
+    
+    # Combined
     elif args.dataset.ds_type == "combined":
         data_module = combined.CombinedDataModule(**args.dataset)
         model_args = dict(args.model)
+    
     else:
         raise ValueError(f"Unknown dataset ds_type: {args.dataset.ds_type}")
 
@@ -60,15 +67,19 @@ def main(
     else:
         model = lightning_model_combined.DepthAnythingV2Module(**model_args)
 
-    experiment_id = f"m{args.model.encoder}_l{args.model.lr}_b{args.dataset.batch_size}_e{args.trainer.max_epochs}_d{args.dataset.ds_type}_p{args.model.pct_start}"
-    logger = False
-    if args.logger:
-        logger = WandbLogger(
-            project=f"depth-any-endoscopy-{args.dataset.ds_type}",
-            name=experiment_id,
-            save_dir="~/home/public/avaishna/Endoscopy-3D-Modeling/",
-            offline=False,
+    experiment_id = (
+        f"m{args.model.encoder}_el{args.model.encoder_lr}_"
+        f"dl{args.model.decoder_lr}_b{args.dataset.batch_size}_"
+        f"e{args.trainer.max_epochs}_d{args.dataset.ds_type}_"
+        f"p{args.model.pct_start:.2f}"
         )
+
+    logger = WandbLogger(
+        project=f"depth-any-endoscopy-{args.dataset.ds_type}",
+        name=experiment_id,
+        save_dir="~/home/public/avaishna/Endoscopy-3D-Modeling/",
+        offline=False,
+    )
 
     checkpoint_callback = ModelCheckpoint(
         monitor="val_loss",
@@ -113,4 +124,4 @@ if __name__ == "__main__":
     main()
 
     # Example script
-    # python main_lightning.py ++dataset.batch_size=12 dataset=c3vd model=large ++trainer.devices=[1] ++model.lr=5e-2
+    # python main_lightning.py ++dataset.batch_size=12 dataset=c3vd model=large ++trainer.devices=[1] ++model.lr=5e-2 ++trainer.max_epochs=1
