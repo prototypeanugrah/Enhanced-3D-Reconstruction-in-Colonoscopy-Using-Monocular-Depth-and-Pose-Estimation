@@ -3,10 +3,11 @@
 import os
 import random
 
-from PIL import Image
+# from PIL import Image
 from torch.utils import data
 from torchvision import transforms
 import torchvision.transforms.functional as F
+import torch
 import cv2
 import numpy as np
 import lightning as pl
@@ -141,7 +142,7 @@ class SimColDataset(data.Dataset):
         image = image.astype(np.float32) / 255.0
 
         # Convert from 16-bit integer [0, 65535] to centimeters [0, 20.0]
-        depth = (depth / 65536.0) * 20.0
+        depth = depth / 65536.0  # * 20.0
 
         # valid_mask = torch.isnan(depth) == 0
 
@@ -158,6 +159,9 @@ class SimColDataset(data.Dataset):
         image = self.transform_input(image)
         depth = self.transform_target(depth)
 
+        mask = torch.isnan(depth) == 0
+        depth[mask == 0] = 0
+
         if self.hflip:
             if random.uniform(0.0, 1.0) > 0.5:
                 image = F.hflip(image)
@@ -173,6 +177,7 @@ class SimColDataset(data.Dataset):
             "id": idx,
             "image": image,
             "depth": depth,
+            "mask": mask,
             "ds_type": self.ds_type,
         }
 
@@ -230,7 +235,7 @@ class SimColDataModule(pl.LightningDataModule):
         train_list (str): Path to the training list.
         val_list (str): Path to the validation list.
         test_list (str): Path to the test list.
-        ds_type (str): Type of the dataset (e.g. "simcol", "c3vd").
+        ds_type (str): Type of the dataset - "simcol".
         batch_size (int): Batch size.
         num_workers (int): Number of workers for data loading.
         size (int): Size of the input images.
@@ -287,6 +292,8 @@ class SimColDataModule(pl.LightningDataModule):
                 data_list=self.val_list,
                 size=self.size,
                 mode="Val",
+                hflip=False,
+                vflip=False,
                 ds_type=self.ds_type,
             )
 
@@ -300,6 +307,8 @@ class SimColDataModule(pl.LightningDataModule):
                 data_list=self.test_list,
                 size=self.size,
                 mode="Test",
+                hflip=False,
+                vflip=False,
                 ds_type=self.ds_type,
             )
 

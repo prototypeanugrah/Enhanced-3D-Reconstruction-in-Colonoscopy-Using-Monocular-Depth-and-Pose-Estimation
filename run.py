@@ -21,9 +21,10 @@ if __name__ == "__main__":
         description="Depth Anything V2 Metric Depth Estimation"
     )
 
-    parser.add_argument("--img-path", type=str)
+    parser.add_argument("-i", "--img-path", type=str)
     parser.add_argument("--input-size", type=int, default=518)
-    parser.add_argument("--outdir", type=str)
+    parser.add_argument("-o", "--outdir", type=str)
+    parser.add_argument("-d", "--ds_type", type=str)
 
     parser.add_argument(
         "--encoder",
@@ -126,7 +127,7 @@ if __name__ == "__main__":
             filenames = [args.img_path]
             if args.outdir is None:
                 args.outdir = str(Path(args.img_path).parent)
-    else:
+    elif args.ds_type == "simcol":
         # SimCol dataset processing
         base_dir = Path(args.img_path)
         for suffix in ["I", "II", "III"]:
@@ -137,6 +138,18 @@ if __name__ == "__main__":
                     recursive=True,
                 )
             )
+        if args.outdir is None:
+            args.outdir = str(base_dir)
+
+    elif args.ds_type == "testing":
+        base_dir = Path(args.img_path)
+        pattern = "frame_*.jpg"
+        filenames.extend(
+            glob.glob(
+                str(base_dir / pattern),
+                recursive=True,
+            )
+        )
         if args.outdir is None:
             args.outdir = str(base_dir)
 
@@ -161,7 +174,7 @@ if __name__ == "__main__":
             # Single image - save directly in outdir
             base_name = Path(filename).stem
             output_folder = Path(args.outdir)
-        else:
+        elif args.ds_type == "simcol":
             # SimCol dataset - maintain directory structure but with _OP suffix
             rel_path = Path(filename).relative_to(Path(args.img_path))
             parent_folder = rel_path.parent
@@ -171,11 +184,16 @@ if __name__ == "__main__":
             )
             base_name = Path(filename).stem
 
+        elif args.ds_type == "testing":
+            rel_path = Path(filename).relative_to(Path(args.img_path))
+            output_folder = Path(args.outdir) / rel_path.parent / "depth_maps"
+            base_name = Path(filename).stem
+
         # Check if files already exist
         npy_path = output_folder / f"{base_name}.npy"
         png_path = output_folder / f"{base_name}.png"
 
-        if npy_path.exists() and png_path.exists():
+        if png_path.exists():
             skipped += 1
             continue
 
@@ -190,27 +208,27 @@ if __name__ == "__main__":
             # output_path = output_folder / f"{base_name}.npy"
             np.save(str(npy_path), depth)
 
-        # depth = (depth - depth.min()) / (depth.max() - depth.min()) * 255.0
-        # depth = depth.astype(np.uint8)
+        depth = (depth - depth.min()) / (depth.max() - depth.min()) * 255.0
+        depth = depth.astype(np.uint8)
 
-        # if args.grayscale:
-        #     depth = np.repeat(depth[..., np.newaxis], 3, axis=-1)
-        # else:
-        #     depth = (cmap(depth)[:, :, :3] * 255)[:, :, ::-1].astype(np.uint8)
+        if args.grayscale:
+            depth = np.repeat(depth[..., np.newaxis], 3, axis=-1)
+        else:
+            depth = (cmap(depth)[:, :, :3] * 255)[:, :, ::-1].astype(np.uint8)
 
-        # if args.pred_only:
-        #     cv2.imwrite(str(png_path), depth)
-        # else:
-        #     split_region = (
-        #         np.ones(
-        #             (raw_image.shape[0], 50, 3),
-        #             dtype=np.uint8,
-        #         )
-        #         * 255
-        #     )
-        #     combined_result = cv2.hconcat([raw_image, split_region, depth])
+        if args.pred_only:
+            cv2.imwrite(str(png_path), depth)
+        else:
+            split_region = (
+                np.ones(
+                    (raw_image.shape[0], 50, 3),
+                    dtype=np.uint8,
+                )
+                * 255
+            )
+            combined_result = cv2.hconcat([raw_image, split_region, depth])
 
-        #     cv2.imwrite(str(png_path), combined_result)
+            cv2.imwrite(str(png_path), combined_result)
 
     print("\nProcessing complete:")
     print(f"- Total files: {len(filenames)}")
@@ -218,4 +236,5 @@ if __name__ == "__main__":
     print(f"- Newly processed: {len(filenames) - skipped}")
 
 
-# python run.py --encoder vitl --load-from "/home/public/avaishna/Endoscopy-3D-Modeling/checkpoints/simcol/mvitl_l5e-06_b20_e30_dsimcol/depth-any-endoscopy-epoch=28-val_loss=0.01.ckpt" --max-depth 20 --img_path datasets/SyntheticColon/
+# python run.py --encoder vitl --load-from "/home/public/avaishna/Endoscopy-3D-Modeling/checkpoints/simcol/mvitl_el5e-06_dl5e-05_b6_e30_dsimcol_p0.05/depth_any_endoscopy_epoch=29_val_loss=0.02.ckpt" --max-depth 20 -i convert/test_video/colonoscopy_videos/20220107_160140_01_c -o convert/test_video/colonoscopy_videos/20220107_160140_01_c_OP -d testing
+# Simcol: python run.py --encoder vitl --load-from "/home/public/avaishna/Endoscopy-3D-Modeling/checkpoints/simcol/mvitl_el5e-06_dl5e-05_b6_e30_dsimcol_p0.05/depth_any_endoscopy_epoch=29_val_loss=0.02.ckpt" --max-depth 20 -i datasets/SyntheticColon -d testing --pred-only --grayscale

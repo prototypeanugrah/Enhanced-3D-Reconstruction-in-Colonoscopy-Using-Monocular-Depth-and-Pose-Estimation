@@ -94,8 +94,8 @@ class DepthAnythingV2Module(pl.LightningModule):
         pct_start: float,
         encoder_lr: float,
         decoder_lr: float,
-        max_encoder_lr: float,
-        max_decoder_lr: float,
+        # max_encoder_lr: float,
+        # max_decoder_lr: float,
         **kwargs,
     ):
         """
@@ -417,8 +417,8 @@ class DepthAnythingV2Module(pl.LightningModule):
             optimizer,
             total_steps=self.trainer.estimated_stepping_batches,
             max_lr=[
-                self.hparams.max_encoder_lr,
-                self.hparams.max_decoder_lr,
+                self.hparams.encoder_lr,
+                self.hparams.decoder_lr,
             ],
             pct_start=self.hparams.pct_start,
             # pct_start=0.05,

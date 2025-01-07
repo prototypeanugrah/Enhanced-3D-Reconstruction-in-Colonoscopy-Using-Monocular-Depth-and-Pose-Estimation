@@ -1,0 +1,7 @@
+- model=large
+- dataset=c3vd
+- ++dataset.batch_size=6
+- ++trainer.devices=[0]
+- ++model.max_encoder_lr=5e-6
+- ++model.max_decoder_lr=5e-5
+- ++model.pct_start=0.05

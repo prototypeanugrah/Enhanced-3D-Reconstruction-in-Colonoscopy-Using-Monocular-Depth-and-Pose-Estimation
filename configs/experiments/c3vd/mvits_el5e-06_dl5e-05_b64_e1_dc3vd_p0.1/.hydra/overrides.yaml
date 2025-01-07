@@ -1,0 +1,5 @@
+- model=small
+- ++trainer.max_epochs=1
+- dataset=c3vd
+- ++dataset.batch_size=64
+- ++trainer.devices=[1]

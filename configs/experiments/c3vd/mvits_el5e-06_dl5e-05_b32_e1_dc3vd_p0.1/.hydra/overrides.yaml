@@ -1,0 +1,4 @@
+- dataset=c3vd
+- ++dataset.batch_size=32
+- model=small
+- ++trainer.max_epochs=1

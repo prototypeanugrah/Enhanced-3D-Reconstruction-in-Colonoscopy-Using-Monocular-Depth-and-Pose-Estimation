@@ -1,0 +1,8 @@
+- model=small
+- ++trainer.max_epochs=10
+- dataset=c3vd
+- ++dataset.batch_size=32
+- ++trainer.devices=[2]
+- ++model.pct_start=0.05
+- ++model.max_encoder_lr=5e-6
+- ++model.max_decoder_lr=5e-5

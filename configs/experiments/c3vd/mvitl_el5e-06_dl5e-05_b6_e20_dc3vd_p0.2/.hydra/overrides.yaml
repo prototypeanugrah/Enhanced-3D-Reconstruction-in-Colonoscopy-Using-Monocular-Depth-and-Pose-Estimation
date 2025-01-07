@@ -1,0 +1,6 @@
+- model=large
+- dataset=c3vd
+- ++dataset.batch_size=6
+- ++trainer.devices=[0]
+- ++model.pct_start=0.2
+- ++trainer.max_epochs=20

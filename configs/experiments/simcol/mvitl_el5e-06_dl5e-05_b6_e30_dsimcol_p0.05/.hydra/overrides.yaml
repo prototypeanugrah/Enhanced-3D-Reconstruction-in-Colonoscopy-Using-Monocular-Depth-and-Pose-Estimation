@@ -1,0 +1,7 @@
+- ++dataset.batch_size=6
+- dataset=simcol
+- model=large
+- ++trainer.devices=[2]
+- ++model.pct_start=0.05
+- ++model.encoder_lr=5e-6
+- ++model.decoder_lr=5e-5

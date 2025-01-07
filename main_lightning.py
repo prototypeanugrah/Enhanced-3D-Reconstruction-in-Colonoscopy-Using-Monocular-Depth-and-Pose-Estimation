@@ -36,7 +36,7 @@ def main(
     pl.seed_everything(42)
 
     # Select appropriate datamodule based on config
-    
+
     # SimCol
     if args.dataset.ds_type == "simcol":
         data_module = simcol.SimColDataModule(**args.dataset)
@@ -44,7 +44,7 @@ def main(
         model_args["max_depth"] = args.model.simcol_max_depth
         del model_args["simcol_max_depth"]
         del model_args["c3vd_max_depth"]
-    
+
     # C3VD
     elif args.dataset.ds_type == "c3vd":
         data_module = c3vd.C3VDDataModule(**args.dataset)
@@ -52,12 +52,12 @@ def main(
         model_args["max_depth"] = args.model.c3vd_max_depth
         del model_args["simcol_max_depth"]
         del model_args["c3vd_max_depth"]
-    
+
     # Combined
     elif args.dataset.ds_type == "combined":
         data_module = combined.CombinedDataModule(**args.dataset)
         model_args = dict(args.model)
-    
+
     else:
         raise ValueError(f"Unknown dataset ds_type: {args.dataset.ds_type}")
 
@@ -72,7 +72,7 @@ def main(
         f"dl{args.model.decoder_lr}_b{args.dataset.batch_size}_"
         f"e{args.trainer.max_epochs}_d{args.dataset.ds_type}_"
         f"p{args.model.pct_start:.2f}"
-        )
+    )
 
     logger = WandbLogger(
         project=f"depth-any-endoscopy-{args.dataset.ds_type}",
@@ -84,14 +84,14 @@ def main(
     checkpoint_callback = ModelCheckpoint(
         monitor="val_loss",
         dirpath=f"checkpoints/{args.dataset.ds_type}/{experiment_id}",
-        filename="depth_any_endoscopy_epoch{epoch:02d}_val_loss{val_loss:.2f}",
+        filename="depth_any_endoscopy_{epoch:02d}_{val_loss:.2f}",
         save_top_k=1,
         mode="min",
     )
 
     early_stopping = EarlyStopping(
         monitor="val_loss",
-        patience=20,
+        patience=40,
         mode="min",
         verbose=True,
         min_delta=1e-4,
@@ -101,7 +101,7 @@ def main(
 
     callback = [
         checkpoint_callback,
-        # early_stopping,
+        early_stopping,
     ]
     if logger:
         callback.append(lr_monitor)
