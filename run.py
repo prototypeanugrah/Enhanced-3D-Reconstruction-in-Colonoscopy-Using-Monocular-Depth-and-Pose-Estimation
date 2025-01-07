@@ -236,5 +236,5 @@ if __name__ == "__main__":
     print(f"- Newly processed: {len(filenames) - skipped}")
 
 
-# python run.py --encoder vitl --load-from "/home/public/avaishna/Endoscopy-3D-Modeling/checkpoints/simcol/mvitl_el5e-06_dl5e-05_b6_e30_dsimcol_p0.05/depth_any_endoscopy_epoch=29_val_loss=0.02.ckpt" --max-depth 20 -i convert/test_video/colonoscopy_videos/20220107_160140_01_c -o convert/test_video/colonoscopy_videos/20220107_160140_01_c_OP -d testing
+# Test videos: python run.py --encoder vitl --load-from "/home/public/avaishna/Endoscopy-3D-Modeling/checkpoints/simcol/mvitl_el5e-06_dl5e-05_b6_e30_dsimcol_p0.05/depth_any_endoscopy_epoch=29_val_loss=0.02.ckpt" --max-depth 20 -i convert/test_video/colonoscopy_videos/20220107_160140_01_c -o convert/test_video/colonoscopy_videos/20220107_160140_01_c_OP -d testing
 # Simcol: python run.py --encoder vitl --load-from "/home/public/avaishna/Endoscopy-3D-Modeling/checkpoints/simcol/mvitl_el5e-06_dl5e-05_b6_e30_dsimcol_p0.05/depth_any_endoscopy_epoch=29_val_loss=0.02.ckpt" --max-depth 20 -i datasets/SyntheticColon -d testing --pred-only --grayscale

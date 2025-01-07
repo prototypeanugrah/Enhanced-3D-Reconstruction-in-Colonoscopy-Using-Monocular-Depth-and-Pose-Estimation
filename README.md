@@ -50,6 +50,10 @@ The training script expects the following dataset structure:
 ```
 datasets/
 ├── SyntheticColon/
+│   ├── SyntheticColon_*/
+│     ├── Frames_*/
+│        ├── Depth_*.png/
+│        └── FrameBuffer_*.png/
 │   ├── train.txt
 │   ├── val.txt
 │   └── test.txt
@@ -69,21 +73,24 @@ To fine-tune the model:
    ```
    python main_lightning.py \
     ++dataset.batch_size=<batch_size> \
+    dataset=<simcol|c3vd> \
     model=<small|base|large> \
     ++trainer.devices=[<gpu_ids>] \
-    ++model.lr=<learning_rate>
+    ++model.encoder_lr=<encoder_learning_rate> \
+    ++model.decoder_lr=<decoder_learning_rate> \
+    ++trainer.max_epochs=<epochs>
    ```
 
 #### Training Configuration
 
 The training setup includes:
 - Model: DepthAnythingV2 with configurable encoder sizes
-- Loss: MSE Loss
+- Loss: MSE Loss or SiLog Loss
 - Optimizer: AdamW with different learning rates for encoder and decoder
 - Learning Rate Scheduler: OneCycleLR with warm-up
 - Mixed Precision Training: 16-bit mixed precision
 - Early Stopping: Monitors validation loss with 5 epochs patience
-- Model Checkpointing: Saves top 3 models based on validation loss
+- Model Checkpointing: Saves best model based on validation loss
 
 #### Model Sizes
 - Small (vits): 48-384 channel features
@@ -93,16 +100,42 @@ The training setup includes:
 
 #### Key Parameters
 - `dataset.batch_size`: Number of images per batch
+- 'dataset': The dataset to be used. Choices: simcol | c3vd
 - `model`: Model size (small, base, large)
 - `trainer.devices`: List of GPU devices to use
-- `model.lr`: Base learning rate (decoder uses 10x this value)
+- `model.encoder_lr`: Base encoder learning rate
+- `model.decoder_lr`: Base learning rate (decoder uses 10x the encoder value as per the original [DepthAnythingV2](https://arxiv.org/pdf/2406.09414) paper)
 - `trainer.max_epochs`: Maximum number of training epochs
+
+### Testing
+
+To evaluate a trained model:
+   ```
+   python test_lightning.py \
+   dataset=<simcol|c3vd> \
+   checkpoint_path=<path_to_checkpoint> \
+   trainer.devices=[<gpu_ids>] \
+   ++dataset.batch_size=<batch_size>
+   ```
+
+### Depth Map Generation:
+
+To generate depth maps for images or videos:
+   ```
+   python run.py \
+   --encoder <vitl|vitb|vits> \
+   --load-from <checkpoint_path> \
+   --max-depth <depth> \
+   -i <input_path> \
+   -d testing \
+   --pred-only \
+   --grayscale
+   ```
 
 #### Monitoring
 Training progress can be monitored through:
-- WandB logging (when enabled)
-- TensorBoard logs
-- Saved checkpoints in `checkpoints/<experiment_id>/`
+- WandB logging
+- Saved checkpoints in `checkpoints/<ds_type>/<experiment_id>/`
 
 #### Metrics
 The model tracks several metrics during training and validation:
