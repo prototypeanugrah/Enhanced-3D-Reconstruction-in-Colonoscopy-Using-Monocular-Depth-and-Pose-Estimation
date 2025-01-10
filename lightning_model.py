@@ -1,4 +1,8 @@
-"Module for Depth Estimation Model"
+"""
+This script is the PyTorch Lightning module for the DepthAnythingV2 model. It
+contains the model definition, training, validation, and testing steps. The
+module also includes the SiLogLoss loss function and evaluation metrics.
+"""
 
 from typing import Literal
 
@@ -425,19 +429,6 @@ class DepthAnythingV2Module(pl.LightningModule):
             # cycle_momentum=False,
             # div_factor=1e9,
         )
-
-        # def poly_decay_fn(current_step: int):
-        #     total_steps = self.trainer.estimated_stepping_batches
-        #     decay = (1 - current_step / total_steps) ** 0.9
-        #     return decay
-
-        # scheduler = lr_scheduler.LambdaLR(
-        #     optimizer,
-        #     lr_lambda=[
-        #         poly_decay_fn,  # encoder
-        #         poly_decay_fn,  # decoder
-        #     ],
-        # )
 
         return {
             "optimizer": optimizer,

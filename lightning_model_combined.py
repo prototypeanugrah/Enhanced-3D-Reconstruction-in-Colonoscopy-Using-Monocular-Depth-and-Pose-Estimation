@@ -1,4 +1,9 @@
-"Module for Depth Estimation Model Config"
+"""
+This script is the PyTorch Lightning module for the combined DepthAnythingV2 
+model. This module trains the model on the combined SimCol and C3VD datasets.
+It contains the model definition, training, validation, and testing steps. The
+module also includes the SiLogLoss loss function and evaluation metrics.
+"""
 
 from typing import Literal
 
@@ -13,6 +18,57 @@ from Depth_Anything_V2.metric_depth.depth_anything_v2 import dpt
 from eval import evaluation
 
 
+class SiLogLoss(nn.Module):
+    def __init__(self, lambd=0.5):
+        """
+        Initialize the SiLogLoss loss function.
+
+        Args:
+            lambd (float, optional): The lambda parameter for the loss function.
+            Defaults to 0.5.
+        """
+        super().__init__()
+        self.lambd = lambd
+
+    def forward(
+        self,
+        pred: torch.Tensor,
+        target: torch.Tensor,
+        valid_mask: torch.Tensor,
+    ) -> torch.Tensor:
+        """
+        Compute the SiLogLoss loss function.
+
+        Args:
+            pred (torch.Tensor): The predicted depth map tensor.
+            target (torch.Tensor): The target depth map tensor.
+            valid_mask (torch.Tensor): The valid mask tensor.
+
+        Returns:
+            torch.Tensor: The computed loss value.
+        """
+
+        assert pred.dim() in (3, 4), f"Pred should be 3D or 4D, got shape {pred.shape}"
+        assert target.dim() == 4, f"Target should be 4D, got shape {target.shape}"
+        assert valid_mask.dim() == 4, f"Mask should be 4D, got shape {valid_mask.shape}"
+
+        # Ensure pred and target have the same shape
+        if pred.dim() == 3:  # If pred is [B, H, W]
+            pred = pred.unsqueeze(1)  # Make it [B, 1, H, W]
+
+        valid_mask = valid_mask.bool()
+        valid_mask = valid_mask.detach()
+
+        diff_log = torch.log(target[valid_mask].flatten()) - torch.log(
+            pred[valid_mask].flatten()
+        )
+        loss = torch.sqrt(
+            torch.pow(diff_log, 2).mean() - self.lambd * torch.pow(diff_log.mean(), 2)
+        )
+
+        return loss
+
+
 class DepthAnythingV2Module(pl.LightningModule):
     """
     Module for depth estimation using the DepthAnythingV2 model.
@@ -21,20 +77,27 @@ class DepthAnythingV2Module(pl.LightningModule):
         encoder (Literal["vits", "vitb", "vitl", "vitg"]): The encoder to use
         in the model.
         min_depth (float, optional): The minimum depth value to clamp the
-        output to. Defaults to 1e-4.
-        max_depth (float, optional): The maximum depth value to clamp the
-        output to. Defaults to 20.0.
-        lr (float, optional): The learning rate to use for training. Defaults
-        to 5e-6.
+        output to.
+        pct_start (float, optional): The percentage of steps to increase the
+        learning rate. Warms up the learning rate from 0 to the initial learning
+        rate.
+        encoder_lr (float, optional): The learning rate for the encoder.
+        decoder_lr (float, optional): The learning rate for the decoder.
+        max_encoder_lr (float, optional): The maximum learning rate for the
+        encoder.
+        max_decoder_lr (float, optional): The maximum learning rate for the
+        decoder.
     """
 
     def __init__(
         self,
         encoder: Literal["vits", "vitb", "vitl", "vitg"],
-        min_depth: float = 1e-4,
-        simcol_max_depth: float = 20.0,
-        c3vd_max_depth: float = 100.0,
-        lr: float = 5e-6,
+        min_depth: float,
+        simcol_max_depth: float,
+        c3vd_max_depth: float,
+        pct_start: float,
+        encoder_lr: float,
+        decoder_lr: float,
         **kwargs,
     ):
         """
@@ -71,7 +134,7 @@ class DepthAnythingV2Module(pl.LightningModule):
 
         dataset = "hypersim"
         pretrained_from = (
-            f"./base_checkpoints/depth_anything_v2_metric_{dataset}_{encoder}.pth"
+            f"./base_checkpoints/depth_anything_v2_metric_hypersim_{encoder}.pth"
         )
         self.model = dpt.DepthAnythingV2(
             **{
@@ -93,7 +156,8 @@ class DepthAnythingV2Module(pl.LightningModule):
             strict=False,
         )
 
-        self.loss = nn.MSELoss()
+        # self.loss = nn.MSELoss()
+        self.loss = SiLogLoss()
 
         # Create separate metric collections for each dataset
         self.simcol_metrics = torchmetrics.MetricCollection(
@@ -120,7 +184,7 @@ class DepthAnythingV2Module(pl.LightningModule):
         self,
         batch: dict,
     ) -> tuple:
-        img, depth = batch["image"], batch["depth"]
+        img, depth, mask = batch["image"], batch["depth"], depth["mask"]
 
         # Convert source list to tensor if it isn't already
         if isinstance(batch["source"], list):

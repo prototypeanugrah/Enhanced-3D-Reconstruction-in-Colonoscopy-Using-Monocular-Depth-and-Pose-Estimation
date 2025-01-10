@@ -1,0 +1,10 @@
+input_path: "/data1_ycao/public/share_data_Anugrah/colonoscopy_videos/20220107_160140_01_c.mp4"  # Replace with your video path
+output_path: "./test_videos/20220107_160140_01_c/"  # Replace with your output directory path
+start_time: 71.5
+end_time: 717.0
+
+# Coordinates for cropping
+x: 670
+y: 0
+width: 4000
+height: 4000

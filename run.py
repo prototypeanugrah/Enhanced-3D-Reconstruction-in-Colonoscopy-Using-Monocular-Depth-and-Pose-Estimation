@@ -1,5 +1,33 @@
 """
-Model to generate depth maps using the DepthAnythingV2 model
+This script is used to generate depth maps for images or videos using the 
+fine-tuned Depth Anything V2 model.
+
+Usage:
+    python run.py \
+    -i <image_path> \
+    -o <output_dir> \
+    -d <dataset_type> \
+    --encoder <encoder> \
+    --load-from <checkpoint> \
+    --max-depth <max_depth> \
+    --save-numpy \
+    --pred-only \
+    --grayscale
+    
+Arguments:
+    -i, --img-path: Path to the image or text file containing image paths.
+    -o, --outdir: Output directory to save the depth maps.
+    -d, --ds_type: Dataset type - simcol or testing.
+    
+    --encoder: Encoder type - vits, vitb, vitl, vitg.
+    --load-from: Path to the checkpoint file.
+    --max-depth: Maximum depth value.
+    
+    --save-numpy: Save the model raw output.
+    --pred-only: Only display the prediction.
+    --grayscale: Do not apply colorful palette.
+    
+
 """
 
 import argparse
@@ -35,7 +63,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--load-from",
         type=str,
-        default="checkpoints/depth_anything_v2_metric_hypersim_vitl.pth",
+        default="base_checkpoints/depth_anything_v2_metric_hypersim_vitl.pth",
     )
     parser.add_argument("--max-depth", type=float, default=20)
 
@@ -113,8 +141,11 @@ if __name__ == "__main__":
                 new_state_dict[key] = value
 
         state_dict = new_state_dict
+        depth_anything.load_state_dict(state_dict)
+        
+    else:
+        depth_anything.load_state_dict(checkpoint)
 
-    depth_anything.load_state_dict(state_dict)
     depth_anything = depth_anything.to(DEVICE).eval()
 
     filenames = []
@@ -133,9 +164,11 @@ if __name__ == "__main__":
         for suffix in ["I", "II", "III"]:
             pattern = f"SyntheticColon_{suffix}/Frames_*/FrameBuffer_*.png"
             filenames.extend(
-                glob.glob(
-                    str(base_dir / pattern),
-                    recursive=True,
+                sorted(
+                    glob.glob(
+                        str(base_dir / pattern),
+                        recursive=True,
+                    )
                 )
             )
         if args.outdir is None:
@@ -159,26 +192,22 @@ if __name__ == "__main__":
     cmap = matplotlib.colormaps.get_cmap("Spectral")
 
     skipped = 0
-    # for k, filename in enumerate(filenames):
     for filename in tqdm(
         filenames,
         desc="Processing images",
         unit="image",
     ):
 
-        raw_image = cv2.imread(filename)
-
-        depth = depth_anything.infer_image(raw_image, args.input_size)
-
         if os.path.isfile(args.img_path):
             # Single image - save directly in outdir
             base_name = Path(filename).stem
             output_folder = Path(args.outdir)
+            
         elif args.ds_type == "simcol":
             # SimCol dataset - maintain directory structure but with _OP suffix
             rel_path = Path(filename).relative_to(Path(args.img_path))
-            parent_folder = rel_path.parent
-            frames_dir = parent_folder.name  # e.g., "Frames_O1"
+            parent_folder = rel_path.parent # e.g., "SyntheticColon_X
+            frames_dir = parent_folder.name  # e.g., "Frames_X"
             output_folder = (
                 Path(args.img_path) / parent_folder.parent / f"{frames_dir}_OP"
             )
@@ -186,7 +215,7 @@ if __name__ == "__main__":
 
         elif args.ds_type == "testing":
             rel_path = Path(filename).relative_to(Path(args.img_path))
-            output_folder = Path(args.outdir) / rel_path.parent / "depth_maps"
+            output_folder = Path(args.outdir) / rel_path.parent
             base_name = Path(filename).stem
 
         # Check if files already exist
@@ -205,20 +234,19 @@ if __name__ == "__main__":
 
         # Save raw depth in meters
         if args.save_numpy:
-            # output_path = output_folder / f"{base_name}.npy"
             np.save(str(npy_path), depth)
 
-        depth = (depth - depth.min()) / (depth.max() - depth.min()) * 255.0
-        depth = depth.astype(np.uint8)
+        depth = (depth - depth.min()) / (depth.max() - depth.min()) * 255.0 # Normalize
+        depth = depth.astype(np.uint8) # Convert to uint8
 
-        if args.grayscale:
+        if args.grayscale: # Grayscale
             depth = np.repeat(depth[..., np.newaxis], 3, axis=-1)
-        else:
+        else: # Colorful
             depth = (cmap(depth)[:, :, :3] * 255)[:, :, ::-1].astype(np.uint8)
 
-        if args.pred_only:
+        if args.pred_only: # Prediction only
             cv2.imwrite(str(png_path), depth)
-        else:
+        else: # Display raw image and depth map side by side
             split_region = (
                 np.ones(
                     (raw_image.shape[0], 50, 3),

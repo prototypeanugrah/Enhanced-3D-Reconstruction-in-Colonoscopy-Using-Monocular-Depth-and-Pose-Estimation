@@ -1,4 +1,28 @@
-"""Main script for video depth estimation."""
+"""
+This script is used to train the DepthAnythingV2 model using PyTorch Lightning.
+It supports training on SimCol, C3VD, or combined datasets. The script uses
+Hydra for configuration management and Weights & Biases for logging.
+
+Usage:
+    python main_lightning.py \
+    dataset.batch_size=12 \
+    dataset.ds_type=c3vd \
+    model.encoder=large \
+    trainer.devices=[1] \
+    model.encoder_lr=5e-6 \
+    model.decoder_lr=5e-5 \
+    trainer.max_epochs=1
+    
+Arguments:
+    dataset.batch_size: Batch size for training.
+    dataset.ds_type: Dataset type - simcol, c3vd, or combined.
+    
+    model.encoder: Encoder type - small, medium, large.
+    trainer.devices: List of GPU devices to use.
+    model.lr: Learning rate.
+    trainer.max_epochs: Maximum number of epochs.
+
+"""
 
 import hydra
 import lightning as pl
@@ -123,5 +147,3 @@ def main(
 if __name__ == "__main__":
     main()
 
-    # Example script
-    # python main_lightning.py ++dataset.batch_size=12 dataset=c3vd model=large ++trainer.devices=[1] ++model.lr=5e-2 ++trainer.max_epochs=1
