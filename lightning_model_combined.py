@@ -132,7 +132,6 @@ class DepthAnythingV2Module(pl.LightningModule):
         # Use the larger max_depth for model initialization (both in cm)
         model_max_depth = max(self.simcol_max_depth, self.c3vd_max_depth)
 
-        dataset = "hypersim"
         pretrained_from = (
             f"./base_checkpoints/depth_anything_v2_metric_hypersim_{encoder}.pth"
         )
@@ -184,7 +183,7 @@ class DepthAnythingV2Module(pl.LightningModule):
         self,
         batch: dict,
     ) -> tuple:
-        img, depth, mask = batch["image"], batch["depth"], depth["mask"]
+        img, depth, mask = batch["image"], batch["depth"], batch["mask"]
 
         # Convert source list to tensor if it isn't already
         if isinstance(batch["source"], list):
@@ -203,6 +202,16 @@ class DepthAnythingV2Module(pl.LightningModule):
         if c3vd_mask.any():
             depth[c3vd_mask] = depth[c3vd_mask] / 10  # mm to cm conversion
 
+        # Create valid mask based on dataset source
+        valid_mask = mask == 1
+        valid_mask = valid_mask & (
+            torch.where(
+                source == 0,
+                (depth >= self.hparams.min_depth) & (depth <= self.simcol_max_depth),
+                (depth >= self.hparams.min_depth) & (depth <= self.c3vd_max_depth),
+            )
+        )
+
         # Clamp depth values to min and max values (all in cm)
         depth = torch.where(
             source == 0,
@@ -210,7 +219,12 @@ class DepthAnythingV2Module(pl.LightningModule):
             torch.clamp(depth, self.hparams.min_depth, self.c3vd_max_depth),
         )
 
-        return img, depth
+        return (
+            img,
+            depth,
+            valid_mask,
+            source,
+        )
 
     def _clamp_predictions(self, pred, source):
         """
@@ -248,102 +262,310 @@ class DepthAnythingV2Module(pl.LightningModule):
         Returns:
             torch.Tensor: The loss value for the training step
         """
-        img, depth = self._preprocess_batch(batch)
+        img, depth, valid_mask, source = self._preprocess_batch(batch)
 
         pred = self.model(img)
         pred = pred[:, None]  # Add channel dimension
-
-        # Convert source list to tensor if it isn't already
-        if isinstance(batch["source"], list):
-            source = torch.tensor(
-                [1 if s == "c3vd" else 0 for s in batch["source"]],
-                device=img.device,
-            )
-        else:
-            source = batch["source"]
 
         # Create masks for each dataset
         simcol_mask = source == 0
         c3vd_mask = source == 1
 
-        # Handle SimCol predictions (already in cm)
-        if simcol_mask.any():
-            simcol_pred = self._clamp_predictions(pred[simcol_mask], "simcol")
-            simcol_metrics = evaluation.compute_errors(
-                simcol_pred[depth[simcol_mask] > 1e-4].flatten(),
-                depth[simcol_mask][depth[simcol_mask] > 1e-4].flatten(),
-            )
-            for metric_name, value in simcol_metrics.items():
-                self.simcol_metrics[metric_name](value)
-                self.log(
-                    f"SimCol/train_simcol_{metric_name}",
-                    value,
-                    batch_size=img.shape[0],
-                )
-
-        # Handle C3VD predictions (convert back to mm for metrics)
-        if c3vd_mask.any():
-            c3vd_pred = self._clamp_predictions(pred[c3vd_mask], "c3vd")
-            # Convert predictions and ground truth back to mm for evaluation
-            c3vd_metrics = evaluation.compute_errors(
-                (c3vd_pred * 10)[depth[c3vd_mask] > 1e-4].flatten(),  # convert to mm
-                (depth[c3vd_mask] * 10)[
-                    depth[c3vd_mask] > 1e-4
-                ].flatten(),  # convert to mm
-            )
-            for metric_name, value in c3vd_metrics.items():
-                self.c3vd_metrics[metric_name](value)
-                self.log(
-                    f"C3VD/train_c3vd_{metric_name}",
-                    value,
-                    batch_size=img.shape[0],
-                )
-
-        # Calculate combined loss using appropriately clamped predictions
-        # (all in cm)
+        # Apply appropriate clamping based on dataset source
         pred_clamped = torch.where(
-            simcol_mask.view(-1, 1, 1, 1),
+            simcol_mask,
             self._clamp_predictions(pred, "simcol"),
             self._clamp_predictions(pred, "c3vd"),
         )
 
-        loss = self.loss(pred_clamped, depth)
-        self.log(
-            "train_loss",
-            loss,
-            batch_size=img.shape[0],
-        )
+        # Calculate loss using valid mask
+        loss = self.loss(pred_clamped, depth, valid_mask)
+        self.log("train_loss", loss, batch_size=img.shape[0])
+
+        # Handle SimCol metrics (already in cm)
+        if simcol_mask.any():
+            simcol_metrics = evaluation.compute_errors(
+                pred_clamped[simcol_mask & valid_mask].flatten(),
+                depth[simcol_mask & valid_mask].flatten(),
+            )
+            for metric_name, value in simcol_metrics.items():
+                self.simcol_metrics[metric_name](value)
+                self.log(
+                    f"SimCol/train_simcol_{metric_name}", value, batch_size=img.shape[0]
+                )
+
+        # Handle C3VD metrics (convert back to mm)
+        if c3vd_mask.any():
+            c3vd_metrics = evaluation.compute_errors(
+                (pred_clamped[c3vd_mask & valid_mask] * 10).flatten(),  # convert to mm
+                (depth[c3vd_mask & valid_mask] * 10).flatten(),  # convert to mm
+            )
+            for metric_name, value in c3vd_metrics.items():
+                self.c3vd_metrics[metric_name](value)
+                self.log(
+                    f"C3VD/train_c3vd_{metric_name}", value, batch_size=img.shape[0]
+                )
 
         return loss
+
+    # def training_step(
+    #     self,
+    #     batch: dict,
+    # ) -> torch.Tensor:
+    #     """
+    #     Perform a training step.
+
+    #     Args:
+    #         batch (dict): A dict containing the input image and the target
+
+    #     Returns:
+    #         torch.Tensor: The loss value for the training step
+    #     """
+    #     img, depth = self._preprocess_batch(batch)
+
+    #     pred = self.model(img)
+    #     pred = pred[:, None]  # Add channel dimension
+
+    #     # Convert source list to tensor if it isn't already
+    #     if isinstance(batch["source"], list):
+    #         source = torch.tensor(
+    #             [1 if s == "c3vd" else 0 for s in batch["source"]],
+    #             device=img.device,
+    #         )
+    #     else:
+    #         source = batch["source"]
+
+    #     # Create masks for each dataset
+    #     simcol_mask = source == 0
+    #     c3vd_mask = source == 1
+
+    #     # Handle SimCol predictions (already in cm)
+    #     if simcol_mask.any():
+    #         simcol_pred = self._clamp_predictions(pred[simcol_mask], "simcol")
+    #         simcol_metrics = evaluation.compute_errors(
+    #             simcol_pred[depth[simcol_mask] > 1e-4].flatten(),
+    #             depth[simcol_mask][depth[simcol_mask] > 1e-4].flatten(),
+    #         )
+    #         for metric_name, value in simcol_metrics.items():
+    #             self.simcol_metrics[metric_name](value)
+    #             self.log(
+    #                 f"SimCol/train_simcol_{metric_name}",
+    #                 value,
+    #                 batch_size=img.shape[0],
+    #             )
+
+    #     # Handle C3VD predictions (convert back to mm for metrics)
+    #     if c3vd_mask.any():
+    #         c3vd_pred = self._clamp_predictions(pred[c3vd_mask], "c3vd")
+    #         # Convert predictions and ground truth back to mm for evaluation
+    #         c3vd_metrics = evaluation.compute_errors(
+    #             (c3vd_pred * 10)[depth[c3vd_mask] > 1e-4].flatten(),  # convert to mm
+    #             (depth[c3vd_mask] * 10)[
+    #                 depth[c3vd_mask] > 1e-4
+    #             ].flatten(),  # convert to mm
+    #         )
+    #         for metric_name, value in c3vd_metrics.items():
+    #             self.c3vd_metrics[metric_name](value)
+    #             self.log(
+    #                 f"C3VD/train_c3vd_{metric_name}",
+    #                 value,
+    #                 batch_size=img.shape[0],
+    #             )
+
+    #     # Calculate combined loss using appropriately clamped predictions
+    #     # (all in cm)
+    #     pred_clamped = torch.where(
+    #         simcol_mask.view(-1, 1, 1, 1),
+    #         self._clamp_predictions(pred, "simcol"),
+    #         self._clamp_predictions(pred, "c3vd"),
+    #     )
+
+    #     loss = self.loss(pred_clamped, depth)
+    #     self.log(
+    #         "train_loss",
+    #         loss,
+    #         batch_size=img.shape[0],
+    #     )
+
+    #     return loss
+
+    # def validation_step(
+    #     self,
+    #     batch: dict,
+    # ) -> torch.Tensor:
+    #     img, depth = self._preprocess_batch(batch)  # depth now in cm
+
+    #     pred = self.model(img)
+    #     pred = pred[:, None]  # Add channel dimension
+
+    #     # Convert source list to tensor if it isn't already
+    #     if isinstance(batch["source"], list):
+    #         source = torch.tensor(
+    #             [1 if s == "c3vd" else 0 for s in batch["source"]],
+    #             device=img.device,
+    #         )
+    #     else:
+    #         source = batch["source"]
+
+    #     # Create masks for each dataset
+    #     simcol_mask = source == 0
+    #     c3vd_mask = source == 1
+
+    #     # Handle SimCol predictions (already in cm)
+    #     if simcol_mask.any():
+    #         simcol_pred = self._clamp_predictions(pred[simcol_mask], "simcol")
+    #         simcol_metrics = evaluation.compute_errors(
+    #             simcol_pred[depth[simcol_mask] > 1e-4].flatten(),
+    #             depth[simcol_mask][depth[simcol_mask] > 1e-4].flatten(),
+    #         )
+    #         for metric_name, value in simcol_metrics.items():
+    #             self.simcol_metrics[metric_name](value)
+    #             self.log(
+    #                 f"SimCol/val_simcol_{metric_name}",
+    #                 value,
+    #                 prog_bar=True,
+    #                 batch_size=img.shape[0],
+    #             )
+
+    #     # Handle C3VD predictions (convert back to mm for metrics)
+    #     if c3vd_mask.any():
+    #         c3vd_pred = self._clamp_predictions(pred[c3vd_mask], "c3vd")
+    #         # Convert predictions and ground truth back to mm for evaluation
+    #         c3vd_metrics = evaluation.compute_errors(
+    #             (c3vd_pred * 10)[depth[c3vd_mask] > 1e-4].flatten(),  # convert to mm
+    #             (depth[c3vd_mask] * 10)[
+    #                 depth[c3vd_mask] > 1e-4
+    #             ].flatten(),  # convert to mm
+    #         )
+    #         for metric_name, value in c3vd_metrics.items():
+    #             self.c3vd_metrics[metric_name](value)
+    #             self.log(
+    #                 f"C3VD/val_c3vd_{metric_name}",
+    #                 value,
+    #                 prog_bar=True,
+    #                 batch_size=img.shape[0],
+    #             )
+
+    #     # Calculate combined loss using appropriately clamped predictions (all in cm)
+    #     pred_clamped = torch.where(
+    #         simcol_mask.view(-1, 1, 1, 1),
+    #         self._clamp_predictions(pred, "simcol"),
+    #         self._clamp_predictions(pred, "c3vd"),
+    #     )
+
+    #     loss = self.loss(pred_clamped, depth)
+    #     self.log(
+    #         "val_loss",
+    #         loss,
+    #         batch_size=img.shape[0],
+    #     )
+
+    #     return loss
+
+    # def on_test_epoch_start(self):
+    #     # Reset all metrics at the start of the test epoch
+    #     self.metric.reset()
+
+    # def test_step(
+    #     self,
+    #     batch,
+    #     batch_idx,
+    # ):
+    #     img, depth = self._preprocess_batch(batch)  # depth now in cm
+
+    #     pred = self.model(img)
+    #     pred = pred[:, None]  # Add channel dimension
+
+    #     # Convert source list to tensor if it isn't already
+    #     if isinstance(batch["source"], list):
+    #         source = torch.tensor(
+    #             [1 if s == "c3vd" else 0 for s in batch["source"]],
+    #             device=img.device,
+    #         )
+    #     else:
+    #         source = batch["source"]
+
+    #     # Create masks for each dataset
+    #     simcol_mask = source == 0
+    #     c3vd_mask = source == 1
+
+    #     # Handle SimCol predictions (already in cm)
+    #     if simcol_mask.any():
+    #         simcol_pred = self._clamp_predictions(pred[simcol_mask], "simcol")
+    #         simcol_metrics = evaluation.compute_errors(
+    #             simcol_pred[depth[simcol_mask] > 1e-4].flatten(),
+    #             depth[simcol_mask][depth[simcol_mask] > 1e-4].flatten(),
+    #         )
+    #         for metric_name, value in simcol_metrics.items():
+    #             self.simcol_metrics[metric_name](value)
+
+    #     # Handle C3VD predictions (convert back to mm for metrics)
+    #     if c3vd_mask.any():
+    #         c3vd_pred = self._clamp_predictions(pred[c3vd_mask], "c3vd")
+    #         # Convert predictions and ground truth back to mm for evaluation
+    #         c3vd_metrics = evaluation.compute_errors(
+    #             (c3vd_pred * 10)[depth[c3vd_mask] > 1e-4].flatten(),  # convert to mm
+    #             (depth[c3vd_mask] * 10)[
+    #                 depth[c3vd_mask] > 1e-4
+    #             ].flatten(),  # convert to mm
+    #         )
+    #         for metric_name, value in c3vd_metrics.items():
+    #             self.c3vd_metrics[metric_name](value)
+
+    # def on_test_epoch_end(self):
+    #     # Compute final metrics for both datasets
+    #     final_simcol_metrics = self.simcol_metrics.compute()
+    #     final_c3vd_metrics = self.c3vd_metrics.compute()
+
+    #     # Log the final computed metrics
+    #     for metric_name, value in final_simcol_metrics.items():
+    #         self.log(f"SimCol/test_{metric_name}", value)
+
+    #     for metric_name, value in final_c3vd_metrics.items():
+    #         self.log(f"C3VD/test_{metric_name}", value)
+
+    #     # Reset metrics after computing
+    #     self.simcol_metrics.reset()
+    #     self.c3vd_metrics.reset()
 
     def validation_step(
         self,
         batch: dict,
     ) -> torch.Tensor:
-        img, depth = self._preprocess_batch(batch)  # depth now in cm
+        """
+        Perform a validation step.
+
+        Args:
+            batch (dict): A dict containing the input image and the target
+
+        Returns:
+            torch.Tensor: The loss value for the validation step
+        """
+        img, depth, valid_mask, source = self._preprocess_batch(batch)
 
         pred = self.model(img)
         pred = pred[:, None]  # Add channel dimension
-
-        # Convert source list to tensor if it isn't already
-        if isinstance(batch["source"], list):
-            source = torch.tensor(
-                [1 if s == "c3vd" else 0 for s in batch["source"]],
-                device=img.device,
-            )
-        else:
-            source = batch["source"]
 
         # Create masks for each dataset
         simcol_mask = source == 0
         c3vd_mask = source == 1
 
-        # Handle SimCol predictions (already in cm)
+        # Apply appropriate clamping based on dataset source
+        pred_clamped = torch.where(
+            simcol_mask,
+            self._clamp_predictions(pred, "simcol"),
+            self._clamp_predictions(pred, "c3vd"),
+        )
+
+        # Calculate loss using valid mask
+        loss = self.loss(pred_clamped, depth, valid_mask)
+        self.log("val_loss", loss, batch_size=img.shape[0])
+
+        # Handle SimCol metrics (already in cm)
         if simcol_mask.any():
-            simcol_pred = self._clamp_predictions(pred[simcol_mask], "simcol")
             simcol_metrics = evaluation.compute_errors(
-                simcol_pred[depth[simcol_mask] > 1e-4].flatten(),
-                depth[simcol_mask][depth[simcol_mask] > 1e-4].flatten(),
+                pred_clamped[simcol_mask & valid_mask].flatten(),
+                depth[simcol_mask & valid_mask].flatten(),
             )
             for metric_name, value in simcol_metrics.items():
                 self.simcol_metrics[metric_name](value)
@@ -354,15 +576,11 @@ class DepthAnythingV2Module(pl.LightningModule):
                     batch_size=img.shape[0],
                 )
 
-        # Handle C3VD predictions (convert back to mm for metrics)
+        # Handle C3VD metrics (convert back to mm)
         if c3vd_mask.any():
-            c3vd_pred = self._clamp_predictions(pred[c3vd_mask], "c3vd")
-            # Convert predictions and ground truth back to mm for evaluation
             c3vd_metrics = evaluation.compute_errors(
-                (c3vd_pred * 10)[depth[c3vd_mask] > 1e-4].flatten(),  # convert to mm
-                (depth[c3vd_mask] * 10)[
-                    depth[c3vd_mask] > 1e-4
-                ].flatten(),  # convert to mm
+                (pred_clamped[c3vd_mask & valid_mask] * 10).flatten(),  # convert to mm
+                (depth[c3vd_mask & valid_mask] * 10).flatten(),  # convert to mm
             )
             for metric_name, value in c3vd_metrics.items():
                 self.c3vd_metrics[metric_name](value)
@@ -373,73 +591,61 @@ class DepthAnythingV2Module(pl.LightningModule):
                     batch_size=img.shape[0],
                 )
 
-        # Calculate combined loss using appropriately clamped predictions (all in cm)
-        pred_clamped = torch.where(
-            simcol_mask.view(-1, 1, 1, 1),
-            self._clamp_predictions(pred, "simcol"),
-            self._clamp_predictions(pred, "c3vd"),
-        )
-
-        loss = self.loss(pred_clamped, depth)
-        self.log(
-            "val_loss",
-            loss,
-            batch_size=img.shape[0],
-        )
-
         return loss
 
     def on_test_epoch_start(self):
-        # Reset all metrics at the start of the test epoch
-        self.metric.reset()
+        """Reset metrics at the start of test epoch."""
+        self.simcol_metrics.reset()
+        self.c3vd_metrics.reset()
 
     def test_step(
         self,
-        batch,
-        batch_idx,
-    ):
-        img, depth = self._preprocess_batch(batch)  # depth now in cm
+        batch: dict,
+        batch_idx: int,
+    ) -> None:
+        """
+        Perform a test step.
+
+        Args:
+            batch (dict): A dict containing the input image and the target
+            batch_idx (int): The index of the batch
+        """
+        img, depth, valid_mask, source = self._preprocess_batch(batch)
 
         pred = self.model(img)
         pred = pred[:, None]  # Add channel dimension
-
-        # Convert source list to tensor if it isn't already
-        if isinstance(batch["source"], list):
-            source = torch.tensor(
-                [1 if s == "c3vd" else 0 for s in batch["source"]],
-                device=img.device,
-            )
-        else:
-            source = batch["source"]
 
         # Create masks for each dataset
         simcol_mask = source == 0
         c3vd_mask = source == 1
 
-        # Handle SimCol predictions (already in cm)
+        # Apply appropriate clamping based on dataset source
+        pred_clamped = torch.where(
+            simcol_mask,
+            self._clamp_predictions(pred, "simcol"),
+            self._clamp_predictions(pred, "c3vd"),
+        )
+
+        # Handle SimCol metrics (already in cm)
         if simcol_mask.any():
-            simcol_pred = self._clamp_predictions(pred[simcol_mask], "simcol")
             simcol_metrics = evaluation.compute_errors(
-                simcol_pred[depth[simcol_mask] > 1e-4].flatten(),
-                depth[simcol_mask][depth[simcol_mask] > 1e-4].flatten(),
+                pred_clamped[simcol_mask & valid_mask].flatten(),
+                depth[simcol_mask & valid_mask].flatten(),
             )
             for metric_name, value in simcol_metrics.items():
                 self.simcol_metrics[metric_name](value)
 
-        # Handle C3VD predictions (convert back to mm for metrics)
+        # Handle C3VD metrics (convert back to mm)
         if c3vd_mask.any():
-            c3vd_pred = self._clamp_predictions(pred[c3vd_mask], "c3vd")
-            # Convert predictions and ground truth back to mm for evaluation
             c3vd_metrics = evaluation.compute_errors(
-                (c3vd_pred * 10)[depth[c3vd_mask] > 1e-4].flatten(),  # convert to mm
-                (depth[c3vd_mask] * 10)[
-                    depth[c3vd_mask] > 1e-4
-                ].flatten(),  # convert to mm
+                (pred_clamped[c3vd_mask & valid_mask] * 10).flatten(),  # convert to mm
+                (depth[c3vd_mask & valid_mask] * 10).flatten(),  # convert to mm
             )
             for metric_name, value in c3vd_metrics.items():
                 self.c3vd_metrics[metric_name](value)
 
     def on_test_epoch_end(self):
+        """Compute and log final metrics at the end of test epoch."""
         # Compute final metrics for both datasets
         final_simcol_metrics = self.simcol_metrics.compute()
         final_c3vd_metrics = self.c3vd_metrics.compute()
@@ -455,6 +661,54 @@ class DepthAnythingV2Module(pl.LightningModule):
         self.simcol_metrics.reset()
         self.c3vd_metrics.reset()
 
+    # def predict_step(
+    #     self,
+    #     batch: dict,
+    # ) -> torch.Tensor:
+    #     """
+    #     Perform a prediction step.
+
+    #     Args:
+    #         batch (dict): A dict containing the input image and the target
+
+    #     Returns:
+    #         torch.Tensor: The predicted depth map, with appropriate clamping based on dataset source
+    #     """
+    #     img, _ = self._preprocess_batch(batch)
+
+    #     pred = self.model(img)
+    #     pred = pred[:, None]  # Add channel dimension
+
+    #     # Convert source list to tensor if it isn't already
+    #     if isinstance(batch["source"], list):
+    #         source = torch.tensor(
+    #             [1 if s == "c3vd" else 0 for s in batch["source"]],
+    #             device=img.device,
+    #         )
+    #     else:
+    #         source = batch["source"]
+
+    #     # Create masks for each dataset
+    #     simcol_mask = source == 0
+    #     c3vd_mask = source == 1
+
+    #     # Apply appropriate clamping based on dataset source
+    #     pred_clamped = torch.zeros_like(pred)
+    #     if simcol_mask.any():
+    #         pred_clamped[simcol_mask] = self._clamp_predictions(
+    #             pred[simcol_mask],
+    #             "simcol",
+    #         )
+    #     if c3vd_mask.any():
+    #         pred_clamped[c3vd_mask] = self._clamp_predictions(
+    #             pred[c3vd_mask],
+    #             "c3vd",
+    #         )
+    #         # Convert C3VD predictions back to mm for final output
+    #         pred_clamped[c3vd_mask] = pred_clamped[c3vd_mask] * 10
+
+    #     return pred_clamped
+
     def predict_step(
         self,
         batch: dict,
@@ -467,43 +721,30 @@ class DepthAnythingV2Module(pl.LightningModule):
 
         Returns:
             torch.Tensor: The predicted depth map, with appropriate clamping based on dataset source
+            and units (cm for SimCol, mm for C3VD)
         """
-        img, _ = self._preprocess_batch(batch)
+        img, _, valid_mask, source = self._preprocess_batch(batch)
 
         pred = self.model(img)
         pred = pred[:, None]  # Add channel dimension
-
-        # Convert source list to tensor if it isn't already
-        if isinstance(batch["source"], list):
-            source = torch.tensor(
-                [1 if s == "c3vd" else 0 for s in batch["source"]],
-                device=img.device,
-            )
-        else:
-            source = batch["source"]
 
         # Create masks for each dataset
         simcol_mask = source == 0
         c3vd_mask = source == 1
 
         # Apply appropriate clamping based on dataset source
-        pred_clamped = torch.zeros_like(pred)
-        if simcol_mask.any():
-            pred_clamped[simcol_mask] = self._clamp_predictions(
-                pred[simcol_mask],
-                "simcol",
-            )
-        if c3vd_mask.any():
-            pred_clamped[c3vd_mask] = self._clamp_predictions(
-                pred[c3vd_mask],
-                "c3vd",
-            )
-            # Convert C3VD predictions back to mm for final output
-            pred_clamped[c3vd_mask] = pred_clamped[c3vd_mask] * 10
+        pred_clamped = torch.where(
+            simcol_mask,
+            self._clamp_predictions(pred, "simcol"),  # SimCol predictions stay in cm
+            self._clamp_predictions(pred, "c3vd")
+            * 10,  # C3VD predictions converted to mm
+        )
 
         return pred_clamped
 
-    def configure_optimizers(self):
+    def configure_optimizers(self) -> dict:
+
+        # Define optimizer with parameter groups
         optimizer = optim.AdamW(
             [
                 {
@@ -512,7 +753,7 @@ class DepthAnythingV2Module(pl.LightningModule):
                         for name, param in self.named_parameters()
                         if "pretrained" in name
                     ],
-                    "lr": self.hparams.lr,  # Encoder learning rate
+                    "lr": self.hparams.encoder_lr,  # Encoder learning rate
                 },
                 {
                     "params": [
@@ -520,20 +761,22 @@ class DepthAnythingV2Module(pl.LightningModule):
                         for name, param in self.named_parameters()
                         if "pretrained" not in name
                     ],
-                    "lr": self.hparams.lr * 10,  # Decoder learning rate
+                    "lr": self.hparams.decoder_lr,  # Decoder learning rate
                 },
             ],
-            lr=self.hparams.lr,
+            betas=(0.9, 0.999),
+            weight_decay=0.01,
         )
+
+        # Define LR scheduler for each parameter group
         scheduler = lr_scheduler.OneCycleLR(
             optimizer,
             total_steps=self.trainer.estimated_stepping_batches,
             max_lr=[
-                self.hparams.lr,
-                self.hparams.lr * 10,
-            ],  # Separate max_lr for each param group
-            pct_start=0.1,
-            # max_lr=self.hparams.lr,
+                self.hparams.encoder_lr,
+                self.hparams.decoder_lr,
+            ],
+            pct_start=self.hparams.pct_start,
             # pct_start=0.05,
             # cycle_momentum=False,
             # div_factor=1e9,
@@ -541,5 +784,8 @@ class DepthAnythingV2Module(pl.LightningModule):
 
         return {
             "optimizer": optimizer,
-            "lr_scheduler": {"scheduler": scheduler, "interval": "step",},
+            "lr_scheduler": {
+                "scheduler": scheduler,
+                "interval": "step",
+            },
         }

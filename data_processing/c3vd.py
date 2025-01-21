@@ -166,6 +166,7 @@ class C3VDDataset(data.Dataset):
                 transforms.ToTensor(),
                 transforms.Resize(
                     (self.size, self.size),
+                    interpolation=cv2.INTER_CUBIC,
                     antialias=True,
                 ),
                 # transforms.Lambda(lambda x: x / 100.0),
@@ -260,6 +261,8 @@ class C3VDDataModule(pl.LightningDataModule):
         self.train_list = train_list
         self.val_list = val_list
         # self.test_list = test_list
+
+        # Common parameters
         self.batch_size = batch_size
         self.num_workers = num_workers
         self.size = size

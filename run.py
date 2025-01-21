@@ -142,7 +142,7 @@ if __name__ == "__main__":
 
         state_dict = new_state_dict
         depth_anything.load_state_dict(state_dict)
-        
+
     else:
         depth_anything.load_state_dict(checkpoint)
 
@@ -198,15 +198,18 @@ if __name__ == "__main__":
         unit="image",
     ):
 
+        output_folder = Path(args.outdir)
+        base_name = Path(filename).stem
+
         if os.path.isfile(args.img_path):
             # Single image - save directly in outdir
             base_name = Path(filename).stem
             output_folder = Path(args.outdir)
-            
+
         elif args.ds_type == "simcol":
             # SimCol dataset - maintain directory structure but with _OP suffix
             rel_path = Path(filename).relative_to(Path(args.img_path))
-            parent_folder = rel_path.parent # e.g., "SyntheticColon_X
+            parent_folder = rel_path.parent  # e.g., "SyntheticColon_X
             frames_dir = parent_folder.name  # e.g., "Frames_X"
             output_folder = (
                 Path(args.img_path) / parent_folder.parent / f"{frames_dir}_OP"
@@ -236,17 +239,17 @@ if __name__ == "__main__":
         if args.save_numpy:
             np.save(str(npy_path), depth)
 
-        depth = (depth - depth.min()) / (depth.max() - depth.min()) * 255.0 # Normalize
-        depth = depth.astype(np.uint8) # Convert to uint8
+        depth = (depth - depth.min()) / (depth.max() - depth.min()) * 255.0  # Normalize
+        depth = depth.astype(np.uint8)  # Convert to uint8
 
-        if args.grayscale: # Grayscale
+        if args.grayscale:  # Grayscale
             depth = np.repeat(depth[..., np.newaxis], 3, axis=-1)
-        else: # Colorful
+        else:  # Colorful
             depth = (cmap(depth)[:, :, :3] * 255)[:, :, ::-1].astype(np.uint8)
 
-        if args.pred_only: # Prediction only
+        if args.pred_only:  # Prediction only
             cv2.imwrite(str(png_path), depth)
-        else: # Display raw image and depth map side by side
+        else:  # Display raw image and depth map side by side
             split_region = (
                 np.ones(
                     (raw_image.shape[0], 50, 3),
