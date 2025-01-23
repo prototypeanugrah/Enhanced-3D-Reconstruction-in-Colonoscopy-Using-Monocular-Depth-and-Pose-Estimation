@@ -1,0 +1,33 @@
+dataset:
+  ds_type: combined
+  batch_size: 6
+  num_workers: 8
+  size: 518
+  simcol_data_dir: ./datasets/SyntheticColon
+  simcol_train_list: ./datasets/SyntheticColon/train.txt
+  simcol_val_list: ./datasets/SyntheticColon/val.txt
+  simcol_test_list: ./datasets/SyntheticColon/test.txt
+  c3vd_data_dir: ./datasets/C3VD
+  c3vd_train_list: ./datasets/C3VD/train.txt
+  c3vd_val_list: ./datasets/C3VD/val.txt
+model:
+  encoder: vitl
+  min_depth: 1.0e-06
+  simcol_max_depth: 20.0
+  c3vd_max_depth: 100.0
+  pct_start: 0.1
+  div_factor: 1000000000.0
+  cycle_momentum: false
+  encoder_lr: 5.0e-06
+  decoder_lr: 5.0e-05
+  ues_checkpoint: true
+  optimize_memory: true
+trainer:
+  devices:
+  - 0
+  max_epochs: 30
+  log_every_n_steps: 1000
+  precision: 16-mixed
+  gradient_clip_val: 1.0
+  val_check_interval: 0.5
+  accumulate_grad_batches: 4

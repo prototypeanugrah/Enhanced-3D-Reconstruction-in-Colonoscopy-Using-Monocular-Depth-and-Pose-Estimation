@@ -3,8 +3,12 @@ min_depth: 0.000001
 simcol_max_depth: 20.0 # 0-20 cm from SimCol3D main paper
 c3vd_max_depth: 100.0 # 0-100 mm from C3VD main paper
 pct_start: 0.1 # warmup phase
+div_factor: 1e9 # initial_lr = max_lr / div_factor
+cycle_momentum: false
 # encoder and decoder lr as per the original paper - https://arxiv.org/pdf/2406.09414
 encoder_lr: 5e-6
 decoder_lr: 5e-5
+ues_checkpoint: true
+optimize_memory: true
 # max_encoder_lr: 5e-7
 # max_decoder_lr: 5e-6

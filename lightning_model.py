@@ -96,6 +96,8 @@ class DepthAnythingV2Module(pl.LightningModule):
         min_depth: float,
         max_depth: float,
         pct_start: float,
+        div_factor: float,
+        cycle_momentum: float,
         encoder_lr: float,
         decoder_lr: float,
         # max_encoder_lr: float,
@@ -141,6 +143,12 @@ class DepthAnythingV2Module(pl.LightningModule):
                 "max_depth": self.hparams.max_depth,
             }
         )
+
+        # Enable gradient checkpointing after model initialization
+        if hasattr(self.model, "encoder") and hasattr(
+            self.model.encoder, "set_grad_checkpointing"
+        ):
+            self.model.encoder.set_grad_checkpointing(enable=True)
 
         # Load pretrained weights
         self.model.load_state_dict(
@@ -215,6 +223,10 @@ class DepthAnythingV2Module(pl.LightningModule):
 
         pred = self.model(img)
         pred = pred.unsqueeze(1)  # Shape: [B, 1, H, W]
+
+        # Free some memory before continuing
+        torch.cuda.empty_cache()
+
         pred = pred.clamp(
             self.hparams.min_depth,
             self.hparams.max_depth,
@@ -236,21 +248,25 @@ class DepthAnythingV2Module(pl.LightningModule):
             loss,
             batch_size=img.shape[0],
         )
-
-        # Compute and log evaluation metrics
-        metrics = evaluation.compute_errors(
-            pred[valid_mask].flatten(),
-            depth[valid_mask].flatten(),
-            # pred[depth > 1e-4].flatten(),
-            # depth[depth > 1e-4].flatten(),
-        )
-        for metric_name, value in metrics.items():
-            self.metric[metric_name](value)
-            self.log(
-                f"Train/train_{metric_name}",
-                value,
-                batch_size=img.shape[0],
+        with torch.no_grad():
+            # Compute and log evaluation metrics
+            metrics = evaluation.compute_errors(
+                pred[valid_mask].detach().flatten(),
+                depth[valid_mask].detach().flatten(),
+                # pred[depth > 1e-4].flatten(),
+                # depth[depth > 1e-4].flatten(),
             )
+            for metric_name, value in metrics.items():
+                self.metric[metric_name](value)
+                self.log(
+                    f"Train/train_{metric_name}",
+                    value.item() if torch.is_tensor(value) else value,
+                    batch_size=img.shape[0],
+                )
+
+        # Clear cache if needed
+        del pred
+        torch.cuda.empty_cache()
 
         return loss
 
@@ -274,6 +290,10 @@ class DepthAnythingV2Module(pl.LightningModule):
 
         pred = self.model(img)
         pred = pred.unsqueeze(1)  # Shape: [B, 1, H, W]
+
+        # Clear cache if needed
+        torch.cuda.empty_cache()
+
         pred = pred.clamp(
             self.hparams.min_depth,
             self.hparams.max_depth,
@@ -295,21 +315,26 @@ class DepthAnythingV2Module(pl.LightningModule):
             batch_size=img.shape[0],
         )
 
-        # Compute and log evaluation metrics
-        metrics = evaluation.compute_errors(
-            pred[valid_mask].flatten(),
-            depth[valid_mask].flatten(),
-            # pred[depth > 1e-4].flatten(),
-            # depth[depth > 1e-4].flatten(),
-        )
-        for metric_name, value in metrics.items():
-            self.metric[metric_name](value)
-            self.log(
-                f"Val/val_{metric_name}",
-                value,
-                prog_bar=True,
-                batch_size=img.shape[0],
+        with torch.no_grad():
+            # Compute and log evaluation metrics
+            metrics = evaluation.compute_errors(
+                pred[valid_mask].detach().flatten(),
+                depth[valid_mask].detach().flatten(),
+                # pred[depth > 1e-4].flatten(),
+                # depth[depth > 1e-4].flatten(),
             )
+            for metric_name, value in metrics.items():
+                self.metric[metric_name](value)
+                self.log(
+                    f"Val/val_{metric_name}",
+                    value.item() if torch.is_tensor(value) else value,
+                    prog_bar=True,
+                    batch_size=img.shape[0],
+                )
+
+        # Clear cache if needed
+        del pred
+        torch.cuda.empty_cache()
 
         return loss
 
@@ -336,21 +361,24 @@ class DepthAnythingV2Module(pl.LightningModule):
             self.hparams.min_depth,
             self.hparams.max_depth,
         )
-        # pred = pred[:, None].clamp(
-        #     self.hparams.min_depth,
-        #     self.hparams.max_depth,
-        # )
 
-        # Compute and log evaluation metrics
-        metrics = evaluation.compute_errors(
-            pred[valid_mask].flatten(),
-            depth[valid_mask].flatten(),
-            # pred[depth > 1e-4].flatten(),
-            # depth[depth > 1e-4].flatten(),
-        )
+        with torch.no_grad():
+            # Compute and log evaluation metrics
+            metrics = evaluation.compute_errors(
+                pred[valid_mask].detach().flatten(),
+                depth[valid_mask].detach().flatten(),
+                # pred[depth > 1e-4].flatten(),
+                # depth[depth > 1e-4].flatten(),
+            )
 
-        for metric_name, value in metrics.items():
-            self.metric[metric_name](value)
+            for metric_name, value in metrics.items():
+                self.metric[metric_name](
+                    value.item() if torch.is_tensor(value) else value
+                )
+
+        # Clear cache if needed
+        del pred
+        torch.cuda.empty_cache()
 
     def on_test_epoch_end(self):
         # Compute final metrics
@@ -425,6 +453,8 @@ class DepthAnythingV2Module(pl.LightningModule):
                 self.hparams.decoder_lr,
             ],
             pct_start=self.hparams.pct_start,
+            div_factor=self.hparams.div_factor,
+            cycle_momentum=self.hparams.cycle_momentum,
             # pct_start=0.05,
             # cycle_momentum=False,
             # div_factor=1e9,

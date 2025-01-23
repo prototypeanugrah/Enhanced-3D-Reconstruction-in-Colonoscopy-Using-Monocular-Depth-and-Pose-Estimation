@@ -1,0 +1,9 @@
+- dataset=combined
+- ++dataset.batch_size=8
+- model=large
+- ++trainer.devices=[0]
+- ++model.encoder_lr=5e-6
+- ++model.decoder_lr=5e-5
+- ++model.pct_start=0.1
+- ++trainer.max_epochs=30
+- ++trainer.log_every_n_steps=1000

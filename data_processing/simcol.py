@@ -84,12 +84,14 @@ class SimColDataset(data.Dataset):
                 transforms.ToTensor(),
                 transforms.Resize(
                     (self.size, self.size),
-                    interpolation=cv2.INTER_CUBIC,
+                    # interpolation=cv2.INTER_LINEAR,
                     antialias=True,
                 ),
                 transforms.Normalize(
-                    mean=[0.485, 0.456, 0.406],
-                    std=[0.229, 0.224, 0.225],
+                    # mean=[0.485, 0.456, 0.406],
+                    # std=[0.229, 0.224, 0.225],
+                    mean=[0.646, 0.557, 0.473],
+                    std=[0.055, 0.046, 0.029],
                 ),
             ]
         )
@@ -99,13 +101,15 @@ class SimColDataset(data.Dataset):
                 transforms.ToTensor(),
                 transforms.Resize(
                     (self.size, self.size),
-                    interpolation=cv2.INTER_CUBIC,
+                    # interpolation=cv2.INTER_LINEAR,
                     antialias=True,
                 ),
-                # transforms.Normalize(
-                #     mean=[0.5],
-                #     std=[0.5],
-                # ),
+                transforms.Normalize(
+                    # mean=[0.5],
+                    # std=[0.5],
+                    mean=[0.140],
+                    std=[0.084],
+                ),
             ]
         )
 
@@ -175,9 +179,9 @@ class SimColDataset(data.Dataset):
         return {
             "dataset": dataset,
             "id": idx,
-            "image": image,
-            "depth": depth,
-            "mask": mask,
+            "image": image.contiguous(),
+            "depth": depth.contiguous(),
+            "mask": mask.contiguous(),
             "ds_type": self.ds_type,
         }
 

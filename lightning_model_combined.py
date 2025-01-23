@@ -96,6 +96,8 @@ class DepthAnythingV2Module(pl.LightningModule):
         simcol_max_depth: float,
         c3vd_max_depth: float,
         pct_start: float,
+        div_factor: float,
+        cycle_momentum: float,
         encoder_lr: float,
         decoder_lr: float,
         **kwargs,
@@ -141,6 +143,12 @@ class DepthAnythingV2Module(pl.LightningModule):
                 "max_depth": model_max_depth,
             }
         )
+
+        # Enable gradient checkpointing after model initialization
+        if hasattr(self.model, "encoder") and hasattr(
+            self.model.encoder, "set_grad_checkpointing"
+        ):
+            self.model.encoder.set_grad_checkpointing(enable=True)
 
         # Load pretrained weights
         self.model.load_state_dict(
@@ -262,49 +270,88 @@ class DepthAnythingV2Module(pl.LightningModule):
         Returns:
             torch.Tensor: The loss value for the training step
         """
+
+        def print_mem(step: str):
+            allocated = torch.cuda.memory_allocated() / 1e9
+            reserved = torch.cuda.memory_reserved() / 1e9
+            max_allocated = torch.cuda.max_memory_allocated() / 1e9
+            print(f"\n{step}:")
+            print(f"Allocated: {allocated:.2f}GB")
+            print(f"Reserved: {reserved:.2f}GB")
+            print(f"Max Allocated: {max_allocated:.2f}GB")
+
+        # print_mem("Start of training step")
+
         img, depth, valid_mask, source = self._preprocess_batch(batch)
+        # print_mem("After preprocessing")
 
         pred = self.model(img)
+        # print_mem("After model forward")
         pred = pred[:, None]  # Add channel dimension
+
+        # Free some memory before continuing
+        torch.cuda.empty_cache()
 
         # Create masks for each dataset
         simcol_mask = source == 0
         c3vd_mask = source == 1
 
+        # with torch.no_grad():
         # Apply appropriate clamping based on dataset source
-        pred_clamped = torch.where(
+        pred = torch.where(
             simcol_mask,
             self._clamp_predictions(pred, "simcol"),
             self._clamp_predictions(pred, "c3vd"),
         )
 
         # Calculate loss using valid mask
-        loss = self.loss(pred_clamped, depth, valid_mask)
+        loss = self.loss(pred, depth, valid_mask)
+        # print_mem("After loss computation")
         self.log("train_loss", loss, batch_size=img.shape[0])
 
-        # Handle SimCol metrics (already in cm)
-        if simcol_mask.any():
-            simcol_metrics = evaluation.compute_errors(
-                pred_clamped[simcol_mask & valid_mask].flatten(),
-                depth[simcol_mask & valid_mask].flatten(),
-            )
-            for metric_name, value in simcol_metrics.items():
-                self.simcol_metrics[metric_name](value)
-                self.log(
-                    f"SimCol/train_simcol_{metric_name}", value, batch_size=img.shape[0]
+        # if self.training:
+        with torch.no_grad():
+            # Handle SimCol metrics (already in cm)
+            if simcol_mask.any():
+                simcol_metrics = evaluation.compute_errors(
+                    pred[simcol_mask & valid_mask].detach().flatten(),
+                    depth[simcol_mask & valid_mask].detach().flatten(),
                 )
+                # print_mem("After SimCol metrics")
+                for metric_name, value in simcol_metrics.items():
+                    self.simcol_metrics[metric_name](
+                        value.item() if torch.is_tensor(value) else value
+                    )
+                    self.log(
+                        f"SimCol/train_simcol_{metric_name}",
+                        value.item() if torch.is_tensor(value) else value,
+                        batch_size=img.shape[0],
+                    )
 
-        # Handle C3VD metrics (convert back to mm)
-        if c3vd_mask.any():
-            c3vd_metrics = evaluation.compute_errors(
-                (pred_clamped[c3vd_mask & valid_mask] * 10).flatten(),  # convert to mm
-                (depth[c3vd_mask & valid_mask] * 10).flatten(),  # convert to mm
-            )
-            for metric_name, value in c3vd_metrics.items():
-                self.c3vd_metrics[metric_name](value)
-                self.log(
-                    f"C3VD/train_c3vd_{metric_name}", value, batch_size=img.shape[0]
+            # Handle C3VD metrics (convert back to mm)
+            if c3vd_mask.any():
+                c3vd_metrics = evaluation.compute_errors(
+                    (pred[c3vd_mask & valid_mask] * 10)
+                    .detach()
+                    .flatten(),  # convert to mm
+                    (depth[c3vd_mask & valid_mask] * 10)
+                    .detach()
+                    .flatten(),  # convert to mm
                 )
+                # print_mem("After C3VD metrics")
+                for metric_name, value in c3vd_metrics.items():
+                    self.c3vd_metrics[metric_name](
+                        value.item() if torch.is_tensor(value) else value
+                    )
+                    self.log(
+                        f"C3VD/train_c3vd_{metric_name}",
+                        value.item() if torch.is_tensor(value) else value,
+                        batch_size=img.shape[0],
+                    )
+
+        # Clear cache after all computations
+        del pred
+        torch.cuda.empty_cache()
 
         return loss
 
@@ -551,45 +598,54 @@ class DepthAnythingV2Module(pl.LightningModule):
         c3vd_mask = source == 1
 
         # Apply appropriate clamping based on dataset source
-        pred_clamped = torch.where(
+        pred = torch.where(
             simcol_mask,
             self._clamp_predictions(pred, "simcol"),
             self._clamp_predictions(pred, "c3vd"),
         )
 
         # Calculate loss using valid mask
-        loss = self.loss(pred_clamped, depth, valid_mask)
+        loss = self.loss(pred, depth, valid_mask)
         self.log("val_loss", loss, batch_size=img.shape[0])
 
-        # Handle SimCol metrics (already in cm)
-        if simcol_mask.any():
-            simcol_metrics = evaluation.compute_errors(
-                pred_clamped[simcol_mask & valid_mask].flatten(),
-                depth[simcol_mask & valid_mask].flatten(),
-            )
-            for metric_name, value in simcol_metrics.items():
-                self.simcol_metrics[metric_name](value)
-                self.log(
-                    f"SimCol/val_simcol_{metric_name}",
-                    value,
-                    prog_bar=True,
-                    batch_size=img.shape[0],
+        with torch.no_grad():
+            # Handle SimCol metrics (already in cm)
+            if simcol_mask.any():
+                simcol_metrics = evaluation.compute_errors(
+                    pred[simcol_mask & valid_mask].detach().flatten(),
+                    depth[simcol_mask & valid_mask].detach().flatten(),
                 )
+                for metric_name, value in simcol_metrics.items():
+                    self.simcol_metrics[metric_name](value)
+                    self.log(
+                        f"SimCol/val_simcol_{metric_name}",
+                        value.item() if torch.is_tensor(value) else value,
+                        prog_bar=True,
+                        batch_size=img.shape[0],
+                    )
 
-        # Handle C3VD metrics (convert back to mm)
-        if c3vd_mask.any():
-            c3vd_metrics = evaluation.compute_errors(
-                (pred_clamped[c3vd_mask & valid_mask] * 10).flatten(),  # convert to mm
-                (depth[c3vd_mask & valid_mask] * 10).flatten(),  # convert to mm
-            )
-            for metric_name, value in c3vd_metrics.items():
-                self.c3vd_metrics[metric_name](value)
-                self.log(
-                    f"C3VD/val_c3vd_{metric_name}",
-                    value,
-                    prog_bar=True,
-                    batch_size=img.shape[0],
+            # Handle C3VD metrics (convert back to mm)
+            if c3vd_mask.any():
+                c3vd_metrics = evaluation.compute_errors(
+                    (pred[c3vd_mask & valid_mask] * 10)
+                    .detach()
+                    .flatten(),  # convert to mm
+                    (depth[c3vd_mask & valid_mask] * 10)
+                    .detach()
+                    .flatten(),  # convert to mm
                 )
+                for metric_name, value in c3vd_metrics.items():
+                    self.c3vd_metrics[metric_name](value)
+                    self.log(
+                        f"C3VD/val_c3vd_{metric_name}",
+                        value.item() if torch.is_tensor(value) else value,
+                        prog_bar=True,
+                        batch_size=img.shape[0],
+                    )
+
+        # Clear cache after all computations
+        del pred
+        torch.cuda.empty_cache()
 
         return loss
 
@@ -620,29 +676,40 @@ class DepthAnythingV2Module(pl.LightningModule):
         c3vd_mask = source == 1
 
         # Apply appropriate clamping based on dataset source
-        pred_clamped = torch.where(
+        pred = torch.where(
             simcol_mask,
             self._clamp_predictions(pred, "simcol"),
             self._clamp_predictions(pred, "c3vd"),
         )
 
-        # Handle SimCol metrics (already in cm)
-        if simcol_mask.any():
-            simcol_metrics = evaluation.compute_errors(
-                pred_clamped[simcol_mask & valid_mask].flatten(),
-                depth[simcol_mask & valid_mask].flatten(),
-            )
-            for metric_name, value in simcol_metrics.items():
-                self.simcol_metrics[metric_name](value)
+        with torch.no_grad():
+            # Handle SimCol metrics (already in cm)
+            if simcol_mask.any():
+                simcol_metrics = evaluation.compute_errors(
+                    pred[simcol_mask & valid_mask].detach().flatten(),
+                    depth[simcol_mask & valid_mask].detach().flatten(),
+                )
+                for metric_name, value in simcol_metrics.items():
+                    self.simcol_metrics[metric_name](
+                        value.item() if torch.is_tensor(value) else value
+                    )
 
-        # Handle C3VD metrics (convert back to mm)
-        if c3vd_mask.any():
-            c3vd_metrics = evaluation.compute_errors(
-                (pred_clamped[c3vd_mask & valid_mask] * 10).flatten(),  # convert to mm
-                (depth[c3vd_mask & valid_mask] * 10).flatten(),  # convert to mm
-            )
-            for metric_name, value in c3vd_metrics.items():
-                self.c3vd_metrics[metric_name](value)
+            # Handle C3VD metrics (convert back to mm)
+            if c3vd_mask.any():
+                c3vd_metrics = evaluation.compute_errors(
+                    (pred[c3vd_mask & valid_mask] * 10)
+                    .detach()
+                    .flatten(),  # convert to mm
+                    (depth[c3vd_mask & valid_mask] * 10)
+                    .detach()
+                    .flatten(),  # convert to mm
+                )
+                for metric_name, value in c3vd_metrics.items():
+                    self.c3vd_metrics[metric_name](
+                        value.item() if torch.is_tensor(value) else value
+                    )
+        # Clear cache after all computations
+        torch.cuda.empty_cache()
 
     def on_test_epoch_end(self):
         """Compute and log final metrics at the end of test epoch."""
@@ -652,10 +719,16 @@ class DepthAnythingV2Module(pl.LightningModule):
 
         # Log the final computed metrics
         for metric_name, value in final_simcol_metrics.items():
-            self.log(f"SimCol/test_{metric_name}", value)
+            self.log(
+                f"SimCol/test_{metric_name}",
+                value.item() if torch.is_tensor(value) else value,
+            )
 
         for metric_name, value in final_c3vd_metrics.items():
-            self.log(f"C3VD/test_{metric_name}", value)
+            self.log(
+                f"C3VD/test_{metric_name}",
+                value.item() if torch.is_tensor(value) else value,
+            )
 
         # Reset metrics after computing
         self.simcol_metrics.reset()
@@ -693,21 +766,21 @@ class DepthAnythingV2Module(pl.LightningModule):
     #     c3vd_mask = source == 1
 
     #     # Apply appropriate clamping based on dataset source
-    #     pred_clamped = torch.zeros_like(pred)
+    #     pred = torch.zeros_like(pred)
     #     if simcol_mask.any():
-    #         pred_clamped[simcol_mask] = self._clamp_predictions(
+    #         pred[simcol_mask] = self._clamp_predictions(
     #             pred[simcol_mask],
     #             "simcol",
     #         )
     #     if c3vd_mask.any():
-    #         pred_clamped[c3vd_mask] = self._clamp_predictions(
+    #         pred[c3vd_mask] = self._clamp_predictions(
     #             pred[c3vd_mask],
     #             "c3vd",
     #         )
     #         # Convert C3VD predictions back to mm for final output
-    #         pred_clamped[c3vd_mask] = pred_clamped[c3vd_mask] * 10
+    #         pred[c3vd_mask] = pred[c3vd_mask] * 10
 
-    #     return pred_clamped
+    #     return pred
 
     def predict_step(
         self,
@@ -733,14 +806,14 @@ class DepthAnythingV2Module(pl.LightningModule):
         c3vd_mask = source == 1
 
         # Apply appropriate clamping based on dataset source
-        pred_clamped = torch.where(
+        pred = torch.where(
             simcol_mask,
             self._clamp_predictions(pred, "simcol"),  # SimCol predictions stay in cm
             self._clamp_predictions(pred, "c3vd")
             * 10,  # C3VD predictions converted to mm
         )
 
-        return pred_clamped
+        return pred
 
     def configure_optimizers(self) -> dict:
 
@@ -777,9 +850,11 @@ class DepthAnythingV2Module(pl.LightningModule):
                 self.hparams.decoder_lr,
             ],
             pct_start=self.hparams.pct_start,
+            div_factor=self.hparams.div_factor,
+            cycle_momentum=self.hparams.cycle_momentum,
+            # div_factor=1e9,
             # pct_start=0.05,
             # cycle_momentum=False,
-            # div_factor=1e9,
         )
 
         return {

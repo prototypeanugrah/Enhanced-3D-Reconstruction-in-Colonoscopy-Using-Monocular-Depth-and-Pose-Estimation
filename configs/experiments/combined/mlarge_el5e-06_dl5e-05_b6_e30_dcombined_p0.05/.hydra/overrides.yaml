@@ -1,0 +1,8 @@
+- dataset.ds_type=combined
+- dataset.batch_size=6
+- model.encoder=large
+- trainer.devices=[4]
+- model.encoder_lr=5e-6
+- model.decoder_lr=5e-5
+- model.pct_start=0.05
+- trainer.max_epochs=30

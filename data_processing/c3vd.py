@@ -130,7 +130,7 @@ class C3VDDataset(data.Dataset):
                 transforms.Resize(
                     (self.size, self.size),
                     antialias=True,
-                    interpolation=cv2.INTER_CUBIC,
+                    # interpolation=cv2.INTER_LINEAR,
                 ),
                 # transforms.ColorJitter(
                 #     brightness=0.4,  # Random brightness adjustment factor
@@ -139,8 +139,10 @@ class C3VDDataset(data.Dataset):
                 #     hue=0.1,  # Random hue adjustment factor
                 # ),
                 transforms.Normalize(
-                    mean=[0.485, 0.456, 0.406],
-                    std=[0.229, 0.224, 0.225],
+                    # mean=[0.485, 0.456, 0.406],
+                    # std=[0.229, 0.224, 0.225],
+                    mean=[0.5906268, 0.5217184, 0.46414354],
+                    std=[0.08790842, 0.0590616, 0.05341814],
                 ),
             ]
         )
@@ -166,14 +168,14 @@ class C3VDDataset(data.Dataset):
                 transforms.ToTensor(),
                 transforms.Resize(
                     (self.size, self.size),
-                    interpolation=cv2.INTER_CUBIC,
+                    # interpolation=cv2.INTER_LINEAR,
                     antialias=True,
                 ),
                 # transforms.Lambda(lambda x: x / 100.0),
-                # transforms.Normalize(
-                #     mean=[0.280],
-                #     std=[0.208],
-                # ),  # Single channel normalization
+                transforms.Normalize(
+                    mean=[0.28444117],
+                    std=[0.2079102],
+                ),  # Single channel normalization
                 # Depth Mean (scaled): 0.2802938222885132
                 # Depth Std (scaled): 0.20831811428070068
             ]
@@ -224,9 +226,9 @@ class C3VDDataset(data.Dataset):
         return {
             "dataset": dataset,
             "id": frame_id,
-            "image": image,
-            "depth": depth,
-            "mask": mask,
+            "image": image.contiguous(),
+            "depth": depth.contiguous(),
+            "mask": mask.contiguous(),
             "ds_type": self.ds_type,
         }
 
