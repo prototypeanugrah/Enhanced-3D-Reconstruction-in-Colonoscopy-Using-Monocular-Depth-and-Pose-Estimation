@@ -8,7 +8,7 @@ cycle_momentum: false
 # encoder and decoder lr as per the original paper - https://arxiv.org/pdf/2406.09414
 encoder_lr: 5e-6
 decoder_lr: 5e-5
-ues_checkpoint: true
+use_checkpoint: true
 optimize_memory: true
 # max_encoder_lr: 5e-7
 # max_decoder_lr: 5e-6

@@ -101,6 +101,7 @@ def main():
         data_dir="./datasets/C3VD/",
         train_list="./datasets/C3VD/train.txt",
         val_list="./datasets/C3VD/val.txt",
+        test_list="./datasets/C3VD/val.txt",
         ds_type="c3vd",
         batch_size=32,
         num_workers=4,

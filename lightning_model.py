@@ -248,21 +248,22 @@ class DepthAnythingV2Module(pl.LightningModule):
             loss,
             batch_size=img.shape[0],
         )
-        with torch.no_grad():
-            # Compute and log evaluation metrics
-            metrics = evaluation.compute_errors(
-                pred[valid_mask].detach().flatten(),
-                depth[valid_mask].detach().flatten(),
-                # pred[depth > 1e-4].flatten(),
-                # depth[depth > 1e-4].flatten(),
+
+        # with torch.no_grad():
+        # Compute and log evaluation metrics
+        metrics = evaluation.compute_errors(
+            pred[valid_mask].detach().flatten(),
+            depth[valid_mask].detach().flatten(),
+            # pred[depth > 1e-4].flatten(),
+            # depth[depth > 1e-4].flatten(),
+        )
+        for metric_name, value in metrics.items():
+            self.metric[metric_name](value)
+            self.log(
+                f"Train/train_{metric_name}",
+                value.item() if torch.is_tensor(value) else value,
+                batch_size=img.shape[0],
             )
-            for metric_name, value in metrics.items():
-                self.metric[metric_name](value)
-                self.log(
-                    f"Train/train_{metric_name}",
-                    value.item() if torch.is_tensor(value) else value,
-                    batch_size=img.shape[0],
-                )
 
         # Clear cache if needed
         del pred
@@ -345,7 +346,7 @@ class DepthAnythingV2Module(pl.LightningModule):
     def test_step(
         self,
         batch: dict,
-    ) -> None:
+    ) -> dict:
         """
         Perform a test step.
 
@@ -379,6 +380,14 @@ class DepthAnythingV2Module(pl.LightningModule):
         # Clear cache if needed
         del pred
         torch.cuda.empty_cache()
+
+        # Return a dictionary of metrics
+        return {
+            "d1": metrics.get("d1", 0.0),
+            "abs_rel": metrics.get("abs_rel", 0.0),
+            "rmse": metrics.get("rmse", 0.0),
+            "l1": metrics.get("l1", 0.0),
+        }
 
     def on_test_epoch_end(self):
         # Compute final metrics

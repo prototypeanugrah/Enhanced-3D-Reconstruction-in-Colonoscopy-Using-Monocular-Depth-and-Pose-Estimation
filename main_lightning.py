@@ -6,8 +6,8 @@ Hydra for configuration management and Weights & Biases for logging.
 Usage:
     python main_lightning.py \
     dataset.batch_size=12 \
-    dataset.ds_type=c3vd \
-    model.encoder=large \
+    dataset=c3vd \
+    model=large \
     trainer.devices=[1] \
     model.encoder_lr=5e-6 \
     model.decoder_lr=5e-5 \

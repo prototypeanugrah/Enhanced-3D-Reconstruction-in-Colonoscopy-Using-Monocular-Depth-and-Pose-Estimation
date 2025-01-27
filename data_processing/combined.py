@@ -103,7 +103,7 @@ class CombinedDataModule(pl.LightningDataModule):
         c3vd_data_dir: str,
         c3vd_train_list: str,
         c3vd_val_list: str,
-        # c3vd_test_list: str,
+        c3vd_test_list: str,
         ds_type: str,
         batch_size: int,
         num_workers: int,
@@ -121,7 +121,7 @@ class CombinedDataModule(pl.LightningDataModule):
         self.c3vd_data_dir = c3vd_data_dir
         self.c3vd_train_list = c3vd_train_list
         self.c3vd_val_list = c3vd_val_list
-        # self.c3vd_test_list = c3vd_test_list
+        self.c3vd_test_list = c3vd_test_list
 
         # Common parameters
         self.batch_size = batch_size
@@ -175,32 +175,34 @@ class CombinedDataModule(pl.LightningDataModule):
                     data_dir=self.c3vd_data_dir,
                     data_list=self.c3vd_val_list,
                     size=self.size,
-                    hflip=True,
-                    vflip=True,
+                    hflip=False,
+                    vflip=False,
                     mode="Val",
                     ds_type=self.ds_type,
                 ),
             )
 
-        # if stage == "test" or stage is None:
-        #     self.test_dataset = CombinedDataset(
-        #         simcol_dataset=simcol.SimColDataset(
-        #             data_dir=self.simcol_data_dir,
-        #             data_list=self.simcol_test_list,
-        #             size=self.size,
-        #             mode="Test",
-        #             ds_type=self.ds_type,
-        #         )
-        #         c3vd_dataset=c3vd.C3VDDataset(
-        #             data_dir=self.c3vd_data_dir,
-        #             data_list=self.c3vd_list,
-        #             size=self.size,
-        #             hflip=True,
-        #             vflip=True,
-        #             mode="Test",
-        #             ds_type=self.ds_type,
-        #         ),
-        #     )
+        if stage == "test" or stage is None:
+            self.test_dataset = CombinedDataset(
+                simcol_dataset=simcol.SimColDataset(
+                    data_dir=self.simcol_data_dir,
+                    data_list=self.simcol_test_list,
+                    size=self.size,
+                    hflip=False,
+                    vflip=False,
+                    mode="Test",
+                    ds_type=self.ds_type,
+                ),
+                c3vd_dataset=c3vd.C3VDDataset(
+                    data_dir=self.c3vd_data_dir,
+                    data_list=self.c3vd_list,
+                    size=self.size,
+                    hflip=False,
+                    vflip=False,
+                    mode="Test",
+                    ds_type=self.ds_type,
+                ),
+            )
 
     def train_dataloader(self):
         return data.DataLoader(

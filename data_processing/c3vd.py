@@ -47,9 +47,9 @@ class C3VDDataset(data.Dataset):
         if self.mode in (
             "Train",
             "Val",
-            # "Test",
+            "Test",
         ):
-            with open(data_list, "r") as f:
+            with open(data_list, "r", encoding="utf-8") as f:
                 content = f.read().strip()
                 folders = [folder.strip() for folder in content.split(",")]
 
@@ -130,54 +130,29 @@ class C3VDDataset(data.Dataset):
                 transforms.Resize(
                     (self.size, self.size),
                     antialias=True,
-                    # interpolation=cv2.INTER_LINEAR,
+                    # interpolation=cv2.INTER_CUBIC,
                 ),
-                # transforms.ColorJitter(
-                #     brightness=0.4,  # Random brightness adjustment factor
-                #     contrast=0.4,  # Random contrast adjustment factor
-                #     saturation=0.2,  # Random saturation adjustment factor
-                #     hue=0.1,  # Random hue adjustment factor
-                # ),
                 transforms.Normalize(
-                    # mean=[0.485, 0.456, 0.406],
-                    # std=[0.229, 0.224, 0.225],
-                    mean=[0.5906268, 0.5217184, 0.46414354],
-                    std=[0.08790842, 0.0590616, 0.05341814],
+                    mean=[0.485, 0.456, 0.406],
+                    std=[0.229, 0.224, 0.225],
+                    # mean=[0.5906268, 0.5217184, 0.46414354],
+                    # std=[0.08790842, 0.0590616, 0.05341814],
                 ),
             ]
         )
-
-        # else:
-        #     # Keep the original transform for validation and test
-        #     self.transform_input = transforms.Compose(
-        #         [
-        #             transforms.ToTensor(),
-        #             transforms.Resize(
-        #                 (self.size, self.size),
-        #                 antialias=True,
-        #             ),
-        #             transforms.Normalize(
-        #                 mean=[0.485, 0.456, 0.406],
-        #                 std=[0.229, 0.224, 0.225],
-        #             ),
-        #         ]
-        #     )
 
         self.transform_output = transforms.Compose(
             [
                 transforms.ToTensor(),
                 transforms.Resize(
                     (self.size, self.size),
-                    # interpolation=cv2.INTER_LINEAR,
+                    # interpolation=cv2.INTER_CUBIC,
                     antialias=True,
                 ),
-                # transforms.Lambda(lambda x: x / 100.0),
-                transforms.Normalize(
-                    mean=[0.28444117],
-                    std=[0.2079102],
-                ),  # Single channel normalization
-                # Depth Mean (scaled): 0.2802938222885132
-                # Depth Std (scaled): 0.20831811428070068
+                # transforms.Normalize(
+                #     mean=[0.28444117],
+                #     std=[0.2079102],
+                # ),  # Single channel normalization
             ]
         )
 
@@ -252,7 +227,7 @@ class C3VDDataModule(pl.LightningDataModule):
         data_dir: str,
         train_list: str,
         val_list: str,
-        # test_list: str,
+        test_list: str,
         ds_type: str,
         batch_size: int = 32,
         num_workers: int = 8,
@@ -262,7 +237,7 @@ class C3VDDataModule(pl.LightningDataModule):
         self.data_dir = data_dir
         self.train_list = train_list
         self.val_list = val_list
-        # self.test_list = test_list
+        self.test_list = test_list
 
         # Common parameters
         self.batch_size = batch_size
@@ -273,7 +248,7 @@ class C3VDDataModule(pl.LightningDataModule):
         # Initialize dataset attributes
         self.train_dataset = None
         self.val_dataset = None
-        # self.test_dataset = None
+        self.test_dataset = None
 
     def prepare_data(self) -> None:
         # This method is called only once and on 1 GPU
@@ -313,17 +288,19 @@ class C3VDDataModule(pl.LightningDataModule):
                 print(f"C3VD Train: {len(self.train_dataset)}")
                 print(f"C3VD Val:   {len(self.val_dataset)}")
 
-        # if stage == "test" or stage is None:
-        #     self.test_dataset = C3VDDataset(
-        #         data_dir=self.data_dir,
-        #         data_list=self.test_list,
-        #         mode="Test",
-        #         size=self.size,
-        #         ds_type=self.ds_type,
-        #     )
+        if stage == "test" or stage is None:
+            self.test_dataset = C3VDDataset(
+                data_dir=self.data_dir,
+                data_list=self.test_list,
+                mode="Test",
+                size=self.size,
+                hflip=False,
+                vflip=False,
+                ds_type=self.ds_type,
+            )
 
-        #     if self.ds_type == "c3vd":
-        #         print(f"C3VD Test:  {len(self.test_dataset)}\n")
+            if self.ds_type == "c3vd":
+                print(f"C3VD Test:  {len(self.test_dataset)}\n")
 
     def train_dataloader(self):
         return data.DataLoader(
@@ -347,13 +324,13 @@ class C3VDDataModule(pl.LightningDataModule):
             drop_last=False,
         )
 
-    # def test_dataloader(self):
-    #     return data.DataLoader(
-    #         self.test_dataset,
-    #         batch_size=self.batch_size,
-    #         shuffle=False,
-    #         num_workers=self.num_workers,
-    #         pin_memory=True,
-    #         persistent_workers=True,
-    #         drop_last=False,
-    #     )
+    def test_dataloader(self):
+        return data.DataLoader(
+            self.test_dataset,
+            batch_size=self.batch_size,
+            shuffle=False,
+            num_workers=self.num_workers,
+            pin_memory=True,
+            persistent_workers=True,
+            drop_last=False,
+        )
