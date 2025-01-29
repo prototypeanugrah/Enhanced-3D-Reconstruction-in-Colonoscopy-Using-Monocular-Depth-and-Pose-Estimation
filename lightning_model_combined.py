@@ -18,15 +18,59 @@ from Depth_Anything_V2.metric_depth.depth_anything_v2 import dpt
 from eval import evaluation
 
 
+# class SiLogLoss(nn.Module):
+#     def __init__(self, lambd=0.5):
+#         """
+#         Initialize the SiLogLoss loss function.
+
+#         Args:
+#             lambd (float, optional): The lambda parameter for the loss function.
+#             Defaults to 0.5.
+#         """
+#         super().__init__()
+#         self.lambd = lambd
+
+#     def forward(
+#         self,
+#         pred: torch.Tensor,
+#         target: torch.Tensor,
+#         valid_mask: torch.Tensor,
+#     ) -> torch.Tensor:
+#         """
+#         Compute the SiLogLoss loss function.
+
+#         Args:
+#             pred (torch.Tensor): The predicted depth map tensor.
+#             target (torch.Tensor): The target depth map tensor.
+#             valid_mask (torch.Tensor): The valid mask tensor.
+
+#         Returns:
+#             torch.Tensor: The computed loss value.
+#         """
+
+#         assert pred.dim() in (3, 4), f"Pred should be 3D or 4D, got shape {pred.shape}"
+#         assert target.dim() == 4, f"Target should be 4D, got shape {target.shape}"
+#         assert valid_mask.dim() == 4, f"Mask should be 4D, got shape {valid_mask.shape}"
+
+#         # Ensure pred and target have the same shape
+#         if pred.dim() == 3:  # If pred is [B, H, W]
+#             pred = pred.unsqueeze(1)  # Make it [B, 1, H, W]
+
+#         valid_mask = valid_mask.bool()
+#         valid_mask = valid_mask.detach()
+
+#         diff_log = torch.log(target[valid_mask].flatten()) - torch.log(
+#             pred[valid_mask].flatten()
+#         )
+#         loss = torch.sqrt(
+#             torch.pow(diff_log, 2).mean() - self.lambd * torch.pow(diff_log.mean(), 2)
+#         )
+
+#         return loss
+
+
 class SiLogLoss(nn.Module):
     def __init__(self, lambd=0.5):
-        """
-        Initialize the SiLogLoss loss function.
-
-        Args:
-            lambd (float, optional): The lambda parameter for the loss function.
-            Defaults to 0.5.
-        """
         super().__init__()
         self.lambd = lambd
 
@@ -35,33 +79,9 @@ class SiLogLoss(nn.Module):
         pred: torch.Tensor,
         target: torch.Tensor,
         valid_mask: torch.Tensor,
-    ) -> torch.Tensor:
-        """
-        Compute the SiLogLoss loss function.
-
-        Args:
-            pred (torch.Tensor): The predicted depth map tensor.
-            target (torch.Tensor): The target depth map tensor.
-            valid_mask (torch.Tensor): The valid mask tensor.
-
-        Returns:
-            torch.Tensor: The computed loss value.
-        """
-
-        assert pred.dim() in (3, 4), f"Pred should be 3D or 4D, got shape {pred.shape}"
-        assert target.dim() == 4, f"Target should be 4D, got shape {target.shape}"
-        assert valid_mask.dim() == 4, f"Mask should be 4D, got shape {valid_mask.shape}"
-
-        # Ensure pred and target have the same shape
-        if pred.dim() == 3:  # If pred is [B, H, W]
-            pred = pred.unsqueeze(1)  # Make it [B, 1, H, W]
-
-        valid_mask = valid_mask.bool()
+    ):
         valid_mask = valid_mask.detach()
-
-        diff_log = torch.log(target[valid_mask].flatten()) - torch.log(
-            pred[valid_mask].flatten()
-        )
+        diff_log = torch.log(target[valid_mask]) - torch.log(pred[valid_mask])
         loss = torch.sqrt(
             torch.pow(diff_log, 2).mean() - self.lambd * torch.pow(diff_log.mean(), 2)
         )
