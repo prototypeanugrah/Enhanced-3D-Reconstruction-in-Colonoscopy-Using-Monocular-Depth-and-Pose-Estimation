@@ -95,7 +95,8 @@ def main(
         f"m{args.model.encoder}_el{args.model.encoder_lr}_"
         f"dl{args.model.decoder_lr}_b{args.dataset.batch_size}_"
         f"e{args.trainer.max_epochs}_d{args.dataset.ds_type}_"
-        f"p{args.model.pct_start:.2f}_div{args.model.div_factor}"
+        f"p{args.model.pct_start:.2f}_div{args.model.div_factor}_"
+        f"c{args.model.cycle_momentum}_prec{args.trainer.precision}"
     )
 
     logger = WandbLogger(

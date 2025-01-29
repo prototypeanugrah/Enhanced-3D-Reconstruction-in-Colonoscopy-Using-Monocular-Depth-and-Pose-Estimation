@@ -17,15 +17,67 @@ from Depth_Anything_V2.metric_depth.depth_anything_v2 import dpt
 from eval import evaluation
 
 
+# class SiLogLoss(nn.Module):
+#     def __init__(self, lambd=0.5):
+#         """
+#         Initialize the SiLogLoss loss function.
+
+#         Args:
+#             lambd (float, optional): The lambda parameter for the loss function.
+#             Defaults to 0.5.
+#         """
+#         super().__init__()
+#         self.lambd = lambd
+
+#     def forward(
+#         self,
+#         pred: torch.Tensor,
+#         target: torch.Tensor,
+#         valid_mask: torch.Tensor,
+#     ) -> torch.Tensor:
+#         """
+#         Compute the SiLogLoss loss function.
+
+#         Args:
+#             pred (torch.Tensor): The predicted depth map tensor.
+#             target (torch.Tensor): The target depth map tensor.
+#             valid_mask (torch.Tensor): The valid mask tensor.
+
+#         Returns:
+#             torch.Tensor: The computed loss value.
+#         """
+
+#         assert pred.dim() in (3, 4), f"Pred should be 3D or 4D, got shape {pred.shape}"
+#         assert target.dim() == 4, f"Target should be 4D, got shape {target.shape}"
+#         assert valid_mask.dim() == 4, f"Mask should be 4D, got shape {valid_mask.shape}"
+
+#         # Ensure pred and target have the same shape
+#         if pred.dim() == 3:  # If pred is [B, H, W]
+#             pred = pred.unsqueeze(1)  # Make it [B, 1, H, W]
+
+#         # Resize valid_mask to match pred dimensions
+#         if valid_mask.shape[2:] != pred.shape[2:]:
+#             valid_mask = torch.nn.functional.interpolate(
+#                 valid_mask.float(),
+#                 size=pred.shape[2:],
+#                 mode="nearest",
+#             )
+
+#         valid_mask = valid_mask.bool()
+#         valid_mask = valid_mask.detach()
+
+#         diff_log = torch.log(target[valid_mask].flatten()) - torch.log(
+#             pred[valid_mask].flatten()
+#         )
+#         loss = torch.sqrt(
+#             torch.pow(diff_log, 2).mean() - self.lambd * torch.pow(diff_log.mean(), 2)
+#         )
+
+#         return loss
+
+
 class SiLogLoss(nn.Module):
     def __init__(self, lambd=0.5):
-        """
-        Initialize the SiLogLoss loss function.
-
-        Args:
-            lambd (float, optional): The lambda parameter for the loss function.
-            Defaults to 0.5.
-        """
         super().__init__()
         self.lambd = lambd
 
@@ -34,33 +86,9 @@ class SiLogLoss(nn.Module):
         pred: torch.Tensor,
         target: torch.Tensor,
         valid_mask: torch.Tensor,
-    ) -> torch.Tensor:
-        """
-        Compute the SiLogLoss loss function.
-
-        Args:
-            pred (torch.Tensor): The predicted depth map tensor.
-            target (torch.Tensor): The target depth map tensor.
-            valid_mask (torch.Tensor): The valid mask tensor.
-
-        Returns:
-            torch.Tensor: The computed loss value.
-        """
-
-        assert pred.dim() in (3, 4), f"Pred should be 3D or 4D, got shape {pred.shape}"
-        assert target.dim() == 4, f"Target should be 4D, got shape {target.shape}"
-        assert valid_mask.dim() == 4, f"Mask should be 4D, got shape {valid_mask.shape}"
-
-        # Ensure pred and target have the same shape
-        if pred.dim() == 3:  # If pred is [B, H, W]
-            pred = pred.unsqueeze(1)  # Make it [B, 1, H, W]
-
-        valid_mask = valid_mask.bool()
+    ):
         valid_mask = valid_mask.detach()
-
-        diff_log = torch.log(target[valid_mask].flatten()) - torch.log(
-            pred[valid_mask].flatten()
-        )
+        diff_log = torch.log(target[valid_mask]) - torch.log(pred[valid_mask])
         loss = torch.sqrt(
             torch.pow(diff_log, 2).mean() - self.lambd * torch.pow(diff_log.mean(), 2)
         )
@@ -188,22 +216,22 @@ class DepthAnythingV2Module(pl.LightningModule):
         Returns:
             torch.Tensor: The preprocessed image, depth, and mask tensors
         """
-        img, depth, mask = batch["image"], batch["depth"], batch["mask"]
+        img, depth = batch["image"], batch["depth"]
         # img, depth = batch["image"], batch["depth"]
 
-        valid_mask = (
-            (mask == 1)
-            & (depth >= self.hparams.min_depth)
-            & (depth <= self.hparams.max_depth)
-        )
+        # valid_mask = (
+        #     (mask == 1)
+        #     & (depth >= self.hparams.min_depth)
+        #     & (depth <= self.hparams.max_depth)
+        # )
 
-        # Clamp depth values to min and max values
-        depth = torch.clamp(
-            depth,
-            min=self.hparams.min_depth,
-            max=self.hparams.max_depth,
-        )
-        return img, depth, valid_mask
+        # # Clamp depth values to min and max values
+        # depth = torch.clamp(
+        #     depth,
+        #     min=self.hparams.min_depth,
+        #     max=self.hparams.max_depth,
+        # )
+        return img, depth  # , valid_mask
 
     def training_step(
         self,
@@ -218,8 +246,8 @@ class DepthAnythingV2Module(pl.LightningModule):
         Returns:
             torch.Tensor: The loss value for the training step
         """
-        # img, depth = self._preprocess_batch(batch)
-        img, depth, valid_mask = self._preprocess_batch(batch)
+        img, depth = self._preprocess_batch(batch)
+        # img, depth, valid_mask = self._preprocess_batch(batch)
 
         pred = self.model(img)
         pred = pred.unsqueeze(1)  # Shape: [B, 1, H, W]
@@ -227,16 +255,18 @@ class DepthAnythingV2Module(pl.LightningModule):
         # Free some memory before continuing
         torch.cuda.empty_cache()
 
-        pred = pred.clamp(
-            self.hparams.min_depth,
-            self.hparams.max_depth,
-        )
+        # pred = pred.clamp(
+        #     self.hparams.min_depth,
+        #     self.hparams.max_depth,
+        # )
         # pred = pred[:, None].clamp(
         #     self.hparams.min_depth,
         #     self.hparams.max_depth,
         # )
 
-        # valid_mask = valid_mask.bool()
+        valid_mask = (depth >= self.hparams.min_depth) & (
+            depth <= self.hparams.max_depth
+        )
 
         loss = self.loss(
             pred,
@@ -286,8 +316,8 @@ class DepthAnythingV2Module(pl.LightningModule):
         Returns:
             torch.Tensor: The loss value for the validation step
         """
-        # img, depth = self._preprocess_batch(batch)
-        img, depth, valid_mask = self._preprocess_batch(batch)
+        img, depth = self._preprocess_batch(batch)
+        # img, depth, valid_mask = self._preprocess_batch(batch)
 
         pred = self.model(img)
         pred = pred.unsqueeze(1)  # Shape: [B, 1, H, W]
@@ -295,14 +325,18 @@ class DepthAnythingV2Module(pl.LightningModule):
         # Clear cache if needed
         torch.cuda.empty_cache()
 
-        pred = pred.clamp(
-            self.hparams.min_depth,
-            self.hparams.max_depth,
-        )
+        # pred = pred.clamp(
+        #     self.hparams.min_depth,
+        #     self.hparams.max_depth,
+        # )
         # pred = pred[:, None].clamp(
         #     self.hparams.min_depth,
         #     self.hparams.max_depth,
         # )
+
+        valid_mask = (depth >= self.hparams.min_depth) & (
+            depth <= self.hparams.max_depth
+        )
 
         # loss = self.loss(pred, depth)
         loss = self.loss(
@@ -353,14 +387,18 @@ class DepthAnythingV2Module(pl.LightningModule):
         Args:
             batch (dict): A dict containing the input image and the target
         """
-        # img, depth = self._preprocess_batch(batch)
-        img, depth, valid_mask = self._preprocess_batch(batch)
+        img, depth = self._preprocess_batch(batch)
+        # img, depth, valid_mask = self._preprocess_batch(batch)
 
         pred = self.model(img)
         pred = pred.unsqueeze(1)  # Shape: [B, 1, H, W]
-        pred = pred.clamp(
-            self.hparams.min_depth,
-            self.hparams.max_depth,
+        # pred = pred.clamp(
+        #     self.hparams.min_depth,
+        #     self.hparams.max_depth,
+        # )
+
+        valid_mask = (depth >= self.hparams.min_depth) & (
+            depth <= self.hparams.max_depth
         )
 
         with torch.no_grad():
@@ -413,13 +451,14 @@ class DepthAnythingV2Module(pl.LightningModule):
         Returns:
             torch.Tensor: The predicted depth map
         """
-        img, _, _ = self._preprocess_batch(batch)
+        img, _ = self._preprocess_batch(batch)
+        # img, _, _ = self._preprocess_batch(batch)
 
         pred = self.model(img)
-        pred = pred.clamp(
-            self.hparams.min_depth,
-            self.hparams.max_depth,
-        )
+        # pred = pred.clamp(
+        #     self.hparams.min_depth,
+        #     self.hparams.max_depth,
+        # )
         # pred = pred[:, None].clamp(
         #     self.hparams.min_depth,
         #     self.hparams.max_depth,

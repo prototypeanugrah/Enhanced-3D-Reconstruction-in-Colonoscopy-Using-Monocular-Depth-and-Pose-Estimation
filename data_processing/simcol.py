@@ -3,7 +3,7 @@
 import os
 import random
 
-# from PIL import Image
+from PIL import Image
 from torch.utils import data
 from torchvision import transforms
 import torchvision.transforms.functional as F
@@ -87,7 +87,10 @@ class SimColDataset(data.Dataset):
                     # interpolation=cv2.INTER_CUBIC,
                     antialias=True,
                 ),
+                # transforms.CenterCrop(self.size),
                 transforms.Normalize(
+                    # mean=[0.5, 0.5, 0.5],
+                    # std=[0.5, 0.5, 0.5],
                     mean=[0.485, 0.456, 0.406],
                     std=[0.229, 0.224, 0.225],
                     # mean=[0.646, 0.557, 0.473],
@@ -96,7 +99,7 @@ class SimColDataset(data.Dataset):
             ]
         )
 
-        self.transform_target = transforms.Compose(
+        self.transform_output = transforms.Compose(
             [
                 transforms.ToTensor(),
                 transforms.Resize(
@@ -104,12 +107,13 @@ class SimColDataset(data.Dataset):
                     # interpolation=cv2.INTER_CUBIC,
                     antialias=True,
                 ),
+                # transforms.CenterCrop(self.size),
                 # transforms.Normalize(
-                #     # mean=[0.5],
-                #     # std=[0.5],
-                #     mean=[0.140],
-                #     std=[0.084],
-                # ),
+                #     mean=[0.5],
+                #     std=[0.5],
+                #     # mean=[0.28444117],
+                #     # std=[0.2079102],
+                # ),  # Single channel normalization
             ]
         )
 
@@ -137,34 +141,36 @@ class SimColDataset(data.Dataset):
         dataset, idx = info[2] + "/" + info[3], info[4]
         target_id = self.target_paths[index]
 
-        image = cv2.imread(input_id, cv2.IMREAD_UNCHANGED)
-        depth = cv2.imread(target_id, cv2.IMREAD_UNCHANGED).astype(np.float32)
+        image = np.array(Image.open(input_id))[:, :, :3]
+        image = image.astype(np.float32) / 255.0  # Convert to [0,1] range
+        depth = (
+            np.array(Image.open(target_id)).astype(np.float32) / 65535.0
+        )  # Convert to [0,1] range
 
-        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-        if image.dtype == np.uint16:
-            image = (image / 256).astype("uint8")
-        image = image.astype(np.float32) / 255.0
+        # image = cv2.imread(input_id, cv2.IMREAD_UNCHANGED)
+        # depth = cv2.imread(target_id, cv2.IMREAD_UNCHANGED).astype(np.float32)
 
-        # Convert from 16-bit integer [0, 65535] to centimeters [0, 20.0]
-        depth = depth / 65536.0  # * 20.0
+        # # Read image and normalize
+        # image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        # if image.dtype == np.uint16:
+        #     # Convert np.uint16 to np.uint8
+        #     image = (image / 256).astype("uint8")
+        # image = image.astype(np.float32) / 255.0
+
+        # # Read depth and normalize
+        # if depth.dtype == np.uint16:
+        #     depth = (depth / 256).astype("uint8")
+        # depth = depth.astype(np.float32) / 255.0
 
         # valid_mask = torch.isnan(depth) == 0
 
-        # image = np.array(Image.open(input_id))[:, :, :3]
-        # if image.dtype == np.uint16:
-        #     image = (image / 256).astype("uint8")
-        # image = image.astype(np.float32) / 255.0  # Normalize to [0,1]
-
-        # # Load depth using PIL and convert to numpy array
-        # depth = np.array(Image.open(target_id))
-        # # Convert from 16-bit integer [0, 65535] to centimeters [0, 20.0]
-        # depth = ((depth / 65536.0) * 20.0).astype(np.float32)
-
         image = self.transform_input(image)
-        depth = self.transform_target(depth)
+        depth = self.transform_output(depth)
 
-        mask = torch.isnan(depth) == 0
-        depth[mask == 0] = 0
+        # mask = torch.isnan(depth) == 0
+        # depth[mask == 0] = 0
+
+        # mask = ((depth >= 0.0) & (depth <= 1.0)).to(torch.float32)
 
         if self.hflip:
             if random.uniform(0.0, 1.0) > 0.5:
@@ -176,12 +182,15 @@ class SimColDataset(data.Dataset):
                 image = F.vflip(image)
                 depth = F.vflip(depth)
 
+        image = image.to(torch.float32)
+        depth = depth.to(torch.float32)
+
         return {
             "dataset": dataset,
             "id": idx,
             "image": image.contiguous(),
             "depth": depth.contiguous(),
-            "mask": mask.contiguous(),
+            # "mask": mask.contiguous(),
             "ds_type": self.ds_type,
         }
 

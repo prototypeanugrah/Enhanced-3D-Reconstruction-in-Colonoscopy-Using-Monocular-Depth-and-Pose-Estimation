@@ -4,6 +4,7 @@ import os
 import glob
 import random
 
+from PIL import Image
 from torch.utils import data
 from torchvision import transforms
 import torchvision.transforms.functional as F
@@ -123,7 +124,6 @@ class C3VDDataset(data.Dataset):
         else:
             raise ValueError("Mode must be one of: 'Train', 'Val', 'Test'")
 
-        # if self.mode == "Train":
         self.transform_input = transforms.Compose(
             [
                 transforms.ToTensor(),
@@ -132,6 +132,7 @@ class C3VDDataset(data.Dataset):
                     antialias=True,
                     # interpolation=cv2.INTER_CUBIC,
                 ),
+                # transforms.CenterCrop(self.size),
                 transforms.Normalize(
                     mean=[0.485, 0.456, 0.406],
                     std=[0.229, 0.224, 0.225],
@@ -149,6 +150,7 @@ class C3VDDataset(data.Dataset):
                     # interpolation=cv2.INTER_CUBIC,
                     antialias=True,
                 ),
+                # transforms.CenterCrop(self.size),
                 # transforms.Normalize(
                 #     mean=[0.28444117],
                 #     std=[0.2079102],
@@ -162,6 +164,14 @@ class C3VDDataset(data.Dataset):
     def __getitem__(self, idx) -> dict:
         info = self.images[idx].split(os.path.sep)
         dataset, frame_id = info[-3], info[-1].split(".")[0]
+        # input_id = self.images[idx]
+        # target_id = self.depths[idx]
+
+        # image = np.array(Image.open(input_id))
+        # image = image.astype(np.float32) / 255.0  # Convert to [0,1] range
+        # depth = (
+        #     np.array(Image.open(target_id)).astype(np.float32) / 65535.0
+        # )  # Convert to [0,1] range
 
         image = cv2.imread(self.images[idx], cv2.IMREAD_UNCHANGED)
         depth = cv2.imread(self.depths[idx], cv2.IMREAD_UNCHANGED)
@@ -173,8 +183,12 @@ class C3VDDataset(data.Dataset):
             image = (image / 256).astype("uint8")
         image = image.astype(np.float32) / 255.0
 
-        # Read depth and scale appropriately
-        depth = depth.astype(np.float32) / 65535.0  #  * 100.0
+        depth = depth.astype(np.float32) / 65535.0
+
+        # # Read depth and normalize
+        # if depth.dtype == np.uint16:
+        #     depth = (depth / 256).astype("uint8")
+        # depth = depth.astype(np.float32) / 255.0
 
         # print(f"Depth range: {depth.min()} - {depth.max()}")
         # print(f"Mask range: {mask.min()} - {mask.max()}")
@@ -185,8 +199,9 @@ class C3VDDataset(data.Dataset):
         # mask = (depth > 0.0) & (depth <= 100.0)  # .astype(np.float32)
         # mask = mask.to(torch.float32)
 
-        mask = torch.isnan(depth) == 0
-        depth[mask == 0] = 0
+        # mask = torch.isnan(depth) == 0
+        # depth[mask == 0] = 0
+        # mask = ((depth >= 0.0) & (depth <= 1.0)).to(torch.float32)
 
         if self.hflip:
             if random.uniform(0.0, 1.0) > 0.5:
@@ -203,7 +218,7 @@ class C3VDDataset(data.Dataset):
             "id": frame_id,
             "image": image.contiguous(),
             "depth": depth.contiguous(),
-            "mask": mask.contiguous(),
+            # "mask": mask.contiguous(),
             "ds_type": self.ds_type,
         }
 
