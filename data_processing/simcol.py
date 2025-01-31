@@ -85,6 +85,7 @@ class SimColDataset(data.Dataset):
                 transforms.Resize(
                     (self.size, self.size),
                     # interpolation=cv2.INTER_CUBIC,
+                    interpolation=transforms.InterpolationMode.BICUBIC,
                     antialias=True,
                 ),
                 # transforms.CenterCrop(self.size),
@@ -105,6 +106,7 @@ class SimColDataset(data.Dataset):
                 transforms.Resize(
                     (self.size, self.size),
                     # interpolation=cv2.INTER_CUBIC,
+                    interpolation=transforms.InterpolationMode.BICUBIC,
                     antialias=True,
                 ),
                 # transforms.CenterCrop(self.size),

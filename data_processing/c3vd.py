@@ -130,6 +130,7 @@ class C3VDDataset(data.Dataset):
                 transforms.Resize(
                     (self.size, self.size),
                     antialias=True,
+                    interpolation=transforms.InterpolationMode.BICUBIC,
                     # interpolation=cv2.INTER_CUBIC,
                 ),
                 # transforms.CenterCrop(self.size),
@@ -148,6 +149,7 @@ class C3VDDataset(data.Dataset):
                 transforms.Resize(
                     (self.size, self.size),
                     # interpolation=cv2.INTER_CUBIC,
+                    interpolation=transforms.InterpolationMode.BICUBIC,
                     antialias=True,
                 ),
                 # transforms.CenterCrop(self.size),

@@ -77,7 +77,16 @@ from eval import evaluation
 
 
 class SiLogLoss(nn.Module):
-    def __init__(self, lambd=0.5):
+    """Scale-invariant logarithmic loss function for depth estimation."""
+
+    def __init__(self, lambd: float = 0.5):
+        """
+        Initialize the SiLogLoss loss function.
+
+        Args:
+        lambd (float, optional): The lambda parameter for the loss function.
+        Defaults to 0.5.
+        """
         super().__init__()
         self.lambd = lambd
 
@@ -86,7 +95,7 @@ class SiLogLoss(nn.Module):
         pred: torch.Tensor,
         target: torch.Tensor,
         valid_mask: torch.Tensor,
-    ):
+    ) -> torch.Tensor:
         valid_mask = valid_mask.detach()
         diff_log = torch.log(target[valid_mask]) - torch.log(pred[valid_mask])
         loss = torch.sqrt(
@@ -296,7 +305,7 @@ class DepthAnythingV2Module(pl.LightningModule):
             )
 
         # Clear cache if needed
-        del pred
+        # del pred
         torch.cuda.empty_cache()
 
         return loss
@@ -368,7 +377,7 @@ class DepthAnythingV2Module(pl.LightningModule):
                 )
 
         # Clear cache if needed
-        del pred
+        # del pred
         torch.cuda.empty_cache()
 
         return loss
@@ -416,7 +425,7 @@ class DepthAnythingV2Module(pl.LightningModule):
                 )
 
         # Clear cache if needed
-        del pred
+        # del pred
         torch.cuda.empty_cache()
 
         # Return a dictionary of metrics
@@ -478,6 +487,7 @@ class DepthAnythingV2Module(pl.LightningModule):
                         if "pretrained" in name
                     ],
                     "lr": self.hparams.encoder_lr,  # Encoder learning rate
+                    "name": "encoder_lr",
                 },
                 {
                     "params": [
@@ -486,6 +496,7 @@ class DepthAnythingV2Module(pl.LightningModule):
                         if "pretrained" not in name
                     ],
                     "lr": self.hparams.decoder_lr,  # Decoder learning rate
+                    "name": "decoder_lr",
                 },
             ],
             betas=(0.9, 0.999),
@@ -513,5 +524,6 @@ class DepthAnythingV2Module(pl.LightningModule):
             "lr_scheduler": {
                 "scheduler": scheduler,
                 "interval": "step",
+                "name": "lr_scheduler",
             },
         }

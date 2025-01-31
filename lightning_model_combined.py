@@ -70,7 +70,16 @@ from eval import evaluation
 
 
 class SiLogLoss(nn.Module):
-    def __init__(self, lambd=0.5):
+    """Scale-invariant logarithmic loss function for depth estimation."""
+    
+    def __init__(self, lambd:float=0.5):
+        """
+        Initialize the SiLogLoss loss function.
+
+        Args:
+        lambd (float, optional): The lambda parameter for the loss function.
+        Defaults to 0.5.
+        """
         super().__init__()
         self.lambd = lambd
 
@@ -79,7 +88,7 @@ class SiLogLoss(nn.Module):
         pred: torch.Tensor,
         target: torch.Tensor,
         valid_mask: torch.Tensor,
-    ):
+    ) -> torch.Tensor:
         valid_mask = valid_mask.detach()
         diff_log = torch.log(target[valid_mask]) - torch.log(pred[valid_mask])
         loss = torch.sqrt(
@@ -383,7 +392,7 @@ class DepthAnythingV2Module(pl.LightningModule):
 
         # Clear cache after all computations
         del pred
-        torch.cuda.empty_cache()
+        # torch.cuda.empty_cache()
 
         return loss
 
@@ -468,7 +477,7 @@ class DepthAnythingV2Module(pl.LightningModule):
 
         # Clear cache after all computations
         del pred
-        torch.cuda.empty_cache()
+        # torch.cuda.empty_cache()
 
         return loss
 
@@ -539,7 +548,7 @@ class DepthAnythingV2Module(pl.LightningModule):
                         value.item() if torch.is_tensor(value) else value
                     )
         # Clear cache after all computations
-        torch.cuda.empty_cache()
+        # torch.cuda.empty_cache()
 
     def on_test_epoch_end(self):
         """Compute and log final metrics at the end of test epoch."""
