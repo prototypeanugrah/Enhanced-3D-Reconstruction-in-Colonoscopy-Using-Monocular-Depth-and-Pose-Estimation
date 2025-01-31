@@ -288,21 +288,21 @@ class DepthAnythingV2Module(pl.LightningModule):
             batch_size=img.shape[0],
         )
 
-        # with torch.no_grad():
-        # Compute and log evaluation metrics
-        metrics = evaluation.compute_errors(
-            pred[valid_mask].detach().flatten(),
-            depth[valid_mask].detach().flatten(),
-            # pred[depth > 1e-4].flatten(),
-            # depth[depth > 1e-4].flatten(),
-        )
-        for metric_name, value in metrics.items():
-            self.metric[metric_name](value)
-            self.log(
-                f"Train/train_{metric_name}",
-                value.item() if torch.is_tensor(value) else value,
-                batch_size=img.shape[0],
+        with torch.no_grad():
+            # Compute and log evaluation metrics
+            metrics = evaluation.compute_errors(
+                pred[valid_mask].detach().flatten(),
+                depth[valid_mask].detach().flatten(),
+                # pred[depth > 1e-4].flatten(),
+                # depth[depth > 1e-4].flatten(),
             )
+            for metric_name, value in metrics.items():
+                self.metric[metric_name](value)
+                self.log(
+                    f"Train/train_{metric_name}",
+                    value.item() if torch.is_tensor(value) else value,
+                    batch_size=img.shape[0],
+                )
 
         # Clear cache if needed
         # del pred
