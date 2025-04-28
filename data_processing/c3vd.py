@@ -2,16 +2,12 @@
 
 import os
 import glob
-import random
 
-from PIL import Image
 from torch.utils import data
 from torchvision import transforms
-import torchvision.transforms.functional as F
 import cv2
 import numpy as np
 import lightning as pl
-import torch
 
 
 class C3VDDataset(data.Dataset):
@@ -33,15 +29,11 @@ class C3VDDataset(data.Dataset):
         data_dir: str,
         data_list: str,
         size: int,
-        hflip: bool,
-        vflip: bool,
         mode: str,
         ds_type: str,
     ) -> None:
         self.data_dir = data_dir
         self.size = size
-        self.hflip = hflip
-        self.vflip = vflip
         self.mode = mode
         self.ds_type = ds_type
 
@@ -124,35 +116,61 @@ class C3VDDataset(data.Dataset):
         else:
             raise ValueError("Mode must be one of: 'Train', 'Val', 'Test'")
 
-        self.transform_input = transforms.Compose(
-            [
-                transforms.ToTensor(),
-                transforms.Resize(
-                    (self.size, self.size),
-                    antialias=True,
-                    interpolation=transforms.InterpolationMode.BICUBIC,
-                    # interpolation=cv2.INTER_CUBIC,
-                ),
-                # transforms.CenterCrop(self.size),
-                transforms.Normalize(
-                    mean=[0.485, 0.456, 0.406],
-                    std=[0.229, 0.224, 0.225],
-                    # mean=[0.5906268, 0.5217184, 0.46414354],
-                    # std=[0.08790842, 0.0590616, 0.05341814],
-                ),
-            ]
-        )
+        if self.mode == "Train":
+            self.transform_input = transforms.Compose(
+                [
+                    transforms.ToTensor(),
+                    transforms.Resize(
+                        (self.size, self.size),
+                        interpolation=transforms.InterpolationMode.BICUBIC,
+                        antialias=True,
+                    ),
+                    transforms.RandomHorizontalFlip(),
+                    transforms.ColorJitter(
+                        hue=0.2,
+                        contrast=0.2,
+                        brightness=0.2,
+                        saturation=0.1,
+                    ),
+                    transforms.RandomAffine(
+                        degrees=0,
+                        translate=(0.1, 0.1),
+                        scale=(0.1, 0.9),
+                    ),
+                    transforms.Normalize(
+                        mean=[0.485, 0.456, 0.406],
+                        std=[0.229, 0.224, 0.225],
+                        # mean=[0.646, 0.557, 0.473],
+                        # std=[0.055, 0.046, 0.029],
+                    ),
+                ]
+            )
+        else:
+            self.transform_input = transforms.Compose(
+                [
+                    transforms.ToTensor(),
+                    transforms.Resize(
+                        (self.size, self.size),
+                        interpolation=transforms.InterpolationMode.BICUBIC,
+                        antialias=True,
+                    ),
+                    transforms.Normalize(
+                        mean=[0.485, 0.456, 0.406],
+                        std=[0.229, 0.224, 0.225],
+                        # mean=[0.646, 0.557, 0.473],
+                        # std=[0.055, 0.046, 0.029],
+                    ),
+                ]
+            )
 
         self.transform_output = transforms.Compose(
             [
                 transforms.ToTensor(),
                 transforms.Resize(
                     (self.size, self.size),
-                    # interpolation=cv2.INTER_CUBIC,
                     interpolation=transforms.InterpolationMode.BICUBIC,
                     antialias=True,
                 ),
-                # transforms.CenterCrop(self.size),
                 # transforms.Normalize(
                 #     mean=[0.28444117],
                 #     std=[0.2079102],
@@ -166,14 +184,6 @@ class C3VDDataset(data.Dataset):
     def __getitem__(self, idx) -> dict:
         info = self.images[idx].split(os.path.sep)
         dataset, frame_id = info[-3], info[-1].split(".")[0]
-        # input_id = self.images[idx]
-        # target_id = self.depths[idx]
-
-        # image = np.array(Image.open(input_id))
-        # image = image.astype(np.float32) / 255.0  # Convert to [0,1] range
-        # depth = (
-        #     np.array(Image.open(target_id)).astype(np.float32) / 65535.0
-        # )  # Convert to [0,1] range
 
         image = cv2.imread(self.images[idx], cv2.IMREAD_UNCHANGED)
         depth = cv2.imread(self.depths[idx], cv2.IMREAD_UNCHANGED)
@@ -187,40 +197,14 @@ class C3VDDataset(data.Dataset):
 
         depth = depth.astype(np.float32) / 65535.0
 
-        # # Read depth and normalize
-        # if depth.dtype == np.uint16:
-        #     depth = (depth / 256).astype("uint8")
-        # depth = depth.astype(np.float32) / 255.0
-
-        # print(f"Depth range: {depth.min()} - {depth.max()}")
-        # print(f"Mask range: {mask.min()} - {mask.max()}")
-
         image = self.transform_input(image)
         depth = self.transform_output(depth)
-
-        # mask = (depth > 0.0) & (depth <= 100.0)  # .astype(np.float32)
-        # mask = mask.to(torch.float32)
-
-        # mask = torch.isnan(depth) == 0
-        # depth[mask == 0] = 0
-        # mask = ((depth >= 0.0) & (depth <= 1.0)).to(torch.float32)
-
-        if self.hflip:
-            if random.uniform(0.0, 1.0) > 0.5:
-                image = F.hflip(image)
-                depth = F.hflip(depth)
-
-        if self.vflip:
-            if random.uniform(0.0, 1.0) > 0.5:
-                image = F.vflip(image)
-                depth = F.vflip(depth)
 
         return {
             "dataset": dataset,
             "id": frame_id,
             "image": image.contiguous(),
             "depth": depth.contiguous(),
-            # "mask": mask.contiguous(),
             "ds_type": self.ds_type,
         }
 
@@ -288,8 +272,6 @@ class C3VDDataModule(pl.LightningDataModule):
                 data_list=self.train_list,
                 mode="Train",
                 size=self.size,
-                hflip=True,
-                vflip=True,
                 ds_type=self.ds_type,
             )
             self.val_dataset = C3VDDataset(
@@ -297,8 +279,6 @@ class C3VDDataModule(pl.LightningDataModule):
                 data_list=self.val_list,
                 mode="Val",
                 size=self.size,
-                hflip=False,
-                vflip=False,
                 ds_type=self.ds_type,
             )
             if self.ds_type == "c3vd":
@@ -311,8 +291,6 @@ class C3VDDataModule(pl.LightningDataModule):
                 data_list=self.test_list,
                 mode="Test",
                 size=self.size,
-                hflip=False,
-                vflip=False,
                 ds_type=self.ds_type,
             )
 

@@ -68,20 +68,22 @@ def load_frames(
 
 
 def remove_bad_frames(
+    root_path: str,
     rgb_list: list,
     depth_list: list,
-    root_path: str,
+    positions_list: list = None,
 ) -> tuple:
     """
     Remove specific bad frames from the RGB and depth lists.
 
     Args:
+        root_path (str): Root path of the dataset
         rgb_list (list): List of RGB frame paths
         depth_list (list): List of depth frame paths
-        root_path (str): Root path of the dataset
+        positions_list (list): List of combined position and quaternion data
 
     Returns:
-        tuple: Updated RGB and depth lists
+        tuple: Updated RGB, depth lists, and positions array
     """
 
     bad_frames = [
@@ -89,6 +91,9 @@ def remove_bad_frames(
         "SyntheticColon_I/Frames_S14/FrameBuffer_0060.png",
         "SyntheticColon_I/Frames_S14/FrameBuffer_0061.png",
     ]
+
+    # Keep track of indices to remove
+    indices_to_remove = []
 
     for frame in bad_frames:
         rgb_path = os.path.join(
@@ -99,16 +104,23 @@ def remove_bad_frames(
             root_path,
             frame.replace("FrameBuffer", "Depth"),
         )
+        if rgb_path in rgb_list:
+            idx = rgb_list.index(rgb_path)
+            indices_to_remove.append(idx)
 
         if rgb_path in rgb_list:
             rgb_list.remove(rgb_path)
+
         if depth_path in depth_list:
             depth_list.remove(depth_path)
 
-    return (
-        rgb_list,
-        depth_list,
-    )
+    # Remove corresponding position data
+    if positions_list is not None:
+        indices_to_remove.sort(reverse=True)
+        for idx in indices_to_remove:
+            positions_list.pop(idx)
+
+    return (rgb_list, depth_list, positions_list)
 
 
 def process_images(
