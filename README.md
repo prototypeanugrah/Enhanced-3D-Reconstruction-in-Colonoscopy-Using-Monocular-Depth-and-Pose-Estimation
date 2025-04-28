@@ -1,32 +1,29 @@
-# 3D Depth Estimation for Colonoscopy Procedures
+# 3D Depth Estimation and Pose Estimation for Colonoscopy Procedures
 
 ## Project Overview
 
-This project focuses on applying depth estimation techniques to colonoscopy videos using synthetic and real patient data. It leverages the DepthAnythingV2 model to generate depth maps for each frame, providing valuable insights into the spatial structure of the colon during endoscopic procedures.
-
+This project focuses on applying depth estimation, pose estimation and 3D reconstruction techniques to colonoscopy videos using synthetic and real patient data. It leverages the DepthAnythingV2 model to generate depth maps for each frame, providing valuable insights into the spatial structure of the colon during endoscopic procedures. The system also includes pose estimation capabilities to enable 3D reconstruction of the colon from consecutive frames.
 
 ## Dataset
 
-1. **Synthetic Colon Dataset (SimCol3D)**:
+**Synthetic Colon Dataset (SimCol3D)**:
    - Simulated colonoscopy data derived from real human CT scans
    - Includes three different anatomies with randomly generated trajectories
    - Provides RGB renderings, camera intrinsics, ground truth depths, and ground truth poses
    - Contains over 37,000 labeled images
 
-2. **C3VD Dataset**:
-   - Real colonoscopy data from the EndoMapper dataset
-   - Licensed under CC BY-NC-SA 4.0
 
 ## Features
 
 - Video processing: Processes frames from synthetic and real colonoscopy videos
 - Depth estimation: Applies the DepthAnythingV2 model for accurate depth map generation
+- Pose estimation: Estimates camera pose between consecutive frames using a modified ResNet-18 architecture
+- 3D Reconstruction: Combines depth maps and pose estimates to create 3D models of the colon
 - Visualization: Converts depth maps to heatmaps and creates overlay videos
 - Dataset splitting: Automatically splits datasets into train, validation, and test sets
 - Training: Supports fine-tuning of DepthAnythingV2 using PyTorch Lightning
-- Evaluation: Includes comprehensive metrics for depth estimation performance
+- Evaluation: Includes comprehensive metrics for depth estimation and pose estimation performance
 - Point Cloud Generation: Converts depth maps to 3D point clouds for visualization
-
 
 ## Installation
 
@@ -43,7 +40,6 @@ This project focuses on applying depth estimation techniques to colonoscopy vide
 
 ## Usage
 
-
 ### Dataset Structure
 
 The training script expects the following dataset structure:
@@ -57,19 +53,15 @@ datasets/
 │   ├── train.txt
 │   ├── val.txt
 │   └── test.txt
-└── C3VD/
-    ├── train.txt
-    ├── val.txt
-    └── test.txt
 ```
 
 Each .txt file should contain paths to the corresponding images and their depth maps in the same folder.
 
 ### Training
 
-The project uses PyTorch Lightning for training. The main training script is `main_lightning.py`, which supports both SimCol3D and C3VD datasets, with options to train on either dataset individually or combined.
+The project uses PyTorch Lightning for training. The main training scripts are:
 
-To fine-tune the model:
+1. For depth estimation:
    ```
    python main_lightning.py \
     ++dataset.batch_size=<batch_size> \
@@ -81,11 +73,21 @@ To fine-tune the model:
     ++trainer.max_epochs=<epochs>
    ```
 
+2. For pose estimation:
+   ```
+   python pose_estimation_lightning.py \
+    dataset.batch_size=32 \
+    trainer.devices=[0] \
+    model.lr=1e-4 \
+    trainer.max_epochs=100
+   ```
+
 #### Training Configuration
 
 The training setup includes:
 - Model: DepthAnythingV2 with configurable encoder sizes
-- Loss: MSE Loss or SiLog Loss
+- Loss: MSE Loss or SiLog Loss for depth estimation
+- Pose Loss: Combined translation and quaternion loss for pose estimation
 - Optimizer: AdamW with different learning rates for encoder and decoder
 - Learning Rate Scheduler: OneCycleLR with warm-up
 - Mixed Precision Training: 16-bit mixed precision
@@ -132,6 +134,14 @@ To generate depth maps for images or videos:
    --grayscale
    ```
 
+### 3D Reconstruction
+
+The system supports 3D reconstruction through:
+1. Depth map generation for each frame
+2. Pose estimation between consecutive frames
+3. Point cloud generation from depth maps
+4. Trajectory reconstruction using estimated poses
+
 #### Monitoring
 Training progress can be monitored through:
 - WandB logging
@@ -139,11 +149,17 @@ Training progress can be monitored through:
 
 #### Metrics
 The model tracks several metrics during training and validation:
-- Loss: MSE loss between predicted and ground truth depth
-- D1: Delta 1 accuracy
-- Abs Rel: Absolute relative error
-- RMSE: Root mean square error
-- L1: L1 error
+- Depth Estimation Metrics:
+  - Loss: MSE loss between predicted and ground truth depth
+  - D1: Delta 1 accuracy
+  - Abs Rel: Absolute relative error
+  - RMSE: Root mean square error
+  - L1: L1 error
+
+- Pose Estimation Metrics:
+  - ATE: Absolute Translation Error
+  - RTE: Relative Translation Error
+  - ROTE: Rotation Error
 
 ## License
 
@@ -151,10 +167,8 @@ This project is licensed under the MIT License. See the LICENSE file for details
 
 ## Acknowledgements
 
-<!-- - The Hyper-Kvasir dataset: [Hyper-Kvasir](https://osf.io/mkzcq/) -->
 - SimCol3D dataset: [SimCol3D](https://rdr.ucl.ac.uk/articles/dataset/Simcol3D_-_3D_Reconstruction_during_Colonoscopy_Challenge_Dataset/24077763?file=42248541)
 - DepthAnythingV2 model: [DepthAnythingV2](https://huggingface.co/depth-anything)
-- C3VD dataset: [C3VD](https://durrlab.github.io/C3VD/)
 
 ## Contributing
 
