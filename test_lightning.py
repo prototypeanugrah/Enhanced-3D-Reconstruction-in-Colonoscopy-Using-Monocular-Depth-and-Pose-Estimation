@@ -22,7 +22,6 @@ import lightning_model_combined
 
 # Set float32 matrix multiplication precision to 'high' for better performance
 torch.set_float32_matmul_precision("high")
-# torch.cuda.set_device(5)
 
 
 class ProcedureMetricCollector(pl.Callback):
@@ -43,8 +42,7 @@ class ProcedureMetricCollector(pl.Callback):
 
     def on_test_epoch_start(self, trainer, pl_module):
         # Move metrics to the correct device
-        device = pl_module.device
-        self.metrics = self.metrics.to(device)
+        self.metrics = self.metrics.to(pl_module.device)
 
     def on_test_batch_end(
         self,
@@ -54,9 +52,6 @@ class ProcedureMetricCollector(pl.Callback):
         batch,
         batch_idx,
     ):
-
-        # print(outputs)
-        # exit(0)
 
         # Ensure outputs contain the expected keys
         if not all(
@@ -75,20 +70,6 @@ class ProcedureMetricCollector(pl.Callback):
         self.metrics["abs_rel"].update(outputs["abs_rel"].to(pl_module.device))
         self.metrics["d1"].update(outputs["d1"].to(pl_module.device))
         self.metrics["rmse"].update(outputs["rmse"].to(pl_module.device))
-        # self.metrics.update(
-        #     d1=outputs["d1"],
-        #     abs_rel=outputs["abs_rel"],
-        #     rmse=outputs["rmse"],
-        #     l1=outputs["l1"],
-        # )
-
-        # Get metrics from outputs
-        # batch_metrics = {
-        #     "l1": pl_module.metric["l1"].compute().item(),
-        #     "abs_rel": pl_module.metric["abs_rel"].compute().item(),
-        #     "d1": pl_module.metric["d1"].compute().item(),
-        #     "rmse": pl_module.metric["rmse"].compute().item(),
-        # }
         batch_metrics = self.metrics.compute()
 
         # Get the file paths for this batch
@@ -123,13 +104,6 @@ class ProcedureMetricCollector(pl.Callback):
 
             procedure_full = f"{colon_type}/{procedure}"
 
-            # metrics = {
-            #     "l1": pl_module.metric["l1"].compute().item(),
-            #     "abs_rel": pl_module.metric["abs_rel"].compute().item(),
-            #     "d1": pl_module.metric["d1"].compute().item(),
-            #     "rmse": pl_module.metric["rmse"].compute().item(),
-            # }
-
             self.metrics_by_procedure[procedure_full].append(
                 batch_metrics
             )  # Use batch_metrics here
@@ -157,17 +131,6 @@ def load_model_weights(model, checkpoint_path, map_location=None):
         model.load_state_dict(new_state_dict)
         del state_dict, checkpoint, new_state_dict
     return model
-
-
-def load_checkpoint_with_fallback(checkpoint_path, map_location=None):
-    checkpoint = torch.load(checkpoint_path, map_location=map_location)
-    print("Checkpoint keys before modification:", checkpoint.keys())  # Debugging line
-    if "pytorch-lightning_version" not in checkpoint:
-        print("Adding missing 'pytorch-lightning_version' key")  # Debugging line
-        checkpoint["pytorch-lightning_version"] = (
-            "2.5.0.post0"  # or set to a default version
-        )
-    return checkpoint
 
 
 @hydra.main(
@@ -227,7 +190,6 @@ def main(
             div_factor=args.model.div_factor,
             pct_start=args.model.pct_start,
             map_location="cpu",
-            # _load_checkpoint=load_checkpoint_with_fallback,
         )
     else:
         model = lightning_model_combined.DepthAnythingV2Module.load_from_checkpoint(

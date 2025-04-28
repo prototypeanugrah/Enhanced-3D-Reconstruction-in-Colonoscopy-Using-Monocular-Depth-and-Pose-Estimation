@@ -116,10 +116,10 @@ def main(
 
     early_stopping = EarlyStopping(
         monitor="val_loss",
-        patience=40,
+        patience=20,
         mode="min",
         verbose=True,
-        min_delta=1e-4,
+        min_delta=1e-6,
     )
 
     lr_monitor = LearningRateMonitor(logging_interval="step")
