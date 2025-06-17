@@ -4,6 +4,9 @@
 
 This project focuses on applying depth estimation, pose estimation and 3D reconstruction techniques to colonoscopy videos using synthetic and real patient data. It leverages the DepthAnythingV2 model to generate depth maps for each frame, providing valuable insights into the spatial structure of the colon during endoscopic procedures. The system also includes pose estimation capabilities to enable 3D reconstruction of the colon from consecutive frames.
 
+<img width="848" alt="image" src="https://github.com/user-attachments/assets/184cc81f-fc57-421c-b92d-7dde5d91c108" />
+
+
 ## Dataset
 
 **Synthetic Colon Dataset (SimCol3D)**:
